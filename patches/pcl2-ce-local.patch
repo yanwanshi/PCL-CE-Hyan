@@ -1,0 +1,2392 @@
+diff --git a/.github/workflows/mirrorchyan_release_note.yml b/.github/workflows/mirrorchyan_release_note.yml
+deleted file mode 100644
+index 006bc62..0000000
+--- a/.github/workflows/mirrorchyan_release_note.yml
++++ /dev/null
+@@ -1,22 +0,0 @@
+-name: Mirror Chyan (Release Note)
+-
+-permissions:
+-  contents: read
+-
+-on:
+-  workflow_dispatch:
+-  release:
+-    types: [edited]
+-
+-jobs:
+-  mirrorchyan:
+-    runs-on: macos-latest
+-
+-    steps:
+-      - id: uploading
+-        uses: MirrorChyan/release-note-action@f392b50c411981ee6d33c8ed5e91d66d84d56202 # v1
+-        with:
+-          mirrorchyan_rid: PCL2-CE
+-
+-          upload_token: ${{ secrets.MirrorChyanUploadToken }}
+-          github_token: ${{ secrets.GITHUB_TOKEN }}
+diff --git a/.github/workflows/mirrorchyan_uploading.yml b/.github/workflows/mirrorchyan_uploading.yml
+deleted file mode 100644
+index 0afdd84..0000000
+--- a/.github/workflows/mirrorchyan_uploading.yml
++++ /dev/null
+@@ -1,41 +0,0 @@
+-name: Mirror Chyan (Upload)
+-
+-permissions:
+-  contents: read
+-
+-on:
+-  workflow_dispatch:
+-    inputs:
+-      channel:
+-        required: true
+-        default: 'stable'
+-        type: choice
+-        options:
+-          - stable
+-          - beta
+-      arch:
+-        required: true
+-        default: 'x64'
+-        type: choice
+-        options:
+-          - x64
+-          - arm64
+-
+-jobs:
+-  mirrorchyan_uploading:
+-    runs-on: macos-latest
+-
+-    steps:
+-      - uses: MirrorChyan/uploading-action@ea9a0f6f516fafb6b0a3046a1fe4b0dccb29eca8 # v1
+-        with:
+-          filetype: latest-release
+-          filename: "PCL2_CE_${{ inputs.channel == 'stable' && 'Release' || 'Beta' }}_${{ inputs.arch == 'x64' && 'x64' || 'ARM64' }}.exe"
+-          mirrorchyan_rid: PCL2-CE
+-
+-          github_token: ${{ secrets.GITHUB_TOKEN }}
+-          owner: PCL-Community
+-          repo: PCL2-CE
+-          upload_token: ${{ secrets.MirrorChyanUploadToken }}
+-          os: win
+-          arch: ${{ inputs.arch }}
+-          channel: ${{ inputs.channel }}
+diff --git a/.github/workflows/release-publish.yml b/.github/workflows/release-publish.yml
+index 29db1a6..5cfd884 100644
+--- a/.github/workflows/release-publish.yml
++++ b/.github/workflows/release-publish.yml
+@@ -121,22 +121,3 @@ jobs:
+         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+         with:
+           tag_name: v${{ inputs.version }}
+-
+-      - name: Trigger MirrorChyanUploading
+-        run: |
+-          MRC_CHANNEL="stable"
+-          if [ "${{ inputs.configuration }}" = "Beta" ]; then
+-            MRC_CHANNEL="beta"
+-          fi
+-
+-          for arch in x64 arm64; do
+-            gh workflow run --repo $GITHUB_REPOSITORY mirrorchyan_uploading.yml -f channel=$MRC_CHANNEL -f arch=$arch
+-          done
+-        env:
+-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+-
+-      - name: Trigger MirrorChyanReleaseNote
+-        run: |
+-          gh workflow run --repo $GITHUB_REPOSITORY mirrorchyan_release_note.yml
+-        env:
+-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+diff --git a/.gitignore b/.gitignore
+index 787b37d..5476c2e 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -345,4 +345,6 @@ MaskFiles/
+ 
+ # macOS
+ 
+-**/.DS_Store
+\ No newline at end of file
++**/.DS_Store
++# 本地构建输出
++artifact/
+diff --git a/LOCAL-CHANGELOG.md b/LOCAL-CHANGELOG.md
+new file mode 100644
+index 0000000..5bf8f45
+--- /dev/null
++++ b/LOCAL-CHANGELOG.md
+@@ -0,0 +1,102 @@
++# 本地构建更新日志（LOCAL-CHANGELOG）
++
++> 本文件记录相对上游 `PCL-Community/PCL-CE`（dev 分支，2026-10-30 克隆）的全部本地改动。
++> 所有改动在源码中以 `// [Local Patch]` 注释标记。**请勿以 PCL-CE 名义分发本构建。**
++
++## local.4 — 2026-11-14
++
++### 修复：GBK 文件名整合包无法识别（「未能找到适合的文件结构」）
++
++- 根因：`ModpackInstall` 打开 ZipArchive 时未指定条目名编码，国内老压缩工具（WinRAR 旧版/好压等）以 GBK 编码打包的 zip 条目名全部乱码，`manifest.json`、`versions/实例名/实例名.json` 等关键文件全部匹配不到 → 落到兜底后同样失败 → 抛出「未能找到适合的文件结构」。已用最小实验证实（构造 GBK 无标志位 zip：默认编码下条目名全乱、GB18030 下完全正确）。
++- 修复：整合包类型识别改为**双编码探测**——先按 GB18030（覆盖国内 GBK 包，纯 ASCII 名不受影响），失败再按默认 UTF-8（覆盖无标志位的 UTF-8 包）；任一编码识别成功即采用。
++- 兜底结构探测（`versions/实例名/实例名.json`）从 `InstallPackCompress` 前移进识别循环参与编码重试（`packType = 8`），`InstallPackCompress` 改用共享正则字段。
++- 两种编码均识别失败时，错误信息附加压缩包顶层条目列表，便于定位包的实际内容。
++- 已知边界：解压阶段（`ExtractModpackFiles`）保持 GB18030 优先 + 异常时切 UTF-8 的原有策略，对 GBK 包正确；极罕见的「无标志位 UTF-8 文件名」包识别后解压可能乱码（修复前则完全无法安装）。
++
++## local.3 — 2026-10-31
++
++### 补丁化工程管理
++
++- 全部本地改动导出为单一补丁文件：`..\patches\pcl2-ce-local.patch`（37 个文件，+735/−457），已验证可完整应用于纯净上游 dev。
++- 新增一键构建脚本 `..\build.ps1`：
++  - `build.ps1`＝拉取上游 dev → 重置工作树 → 套补丁 → 发布自包含版（含未导出手改的安全拦截）；
++  - `build.ps1 -ExportPatches`＝把当前工作树改动重新导出为补丁；
++  - `-NoFetch` 离线重建、`-Force` 跳过安全检查、`-Configuration/-Platform` 可选。
++- `.gitignore` 增加 `artifact/`。
++
++### 安全加固
++
++- 通用解压助手（`ModBase`）的 zip-slip 防护由前缀比较改为 `Files.IsPathWithinDirectory` 严格目录包含校验，修复兄弟目录（`C:\a` 误匹配 `C:\ab`）误放行的理论缺陷。
++
++## local.2 — 2026-10-31
++
++### 自有更新通道（配置驱动）
++
++- 移除全部官方更新源（社区公益源 Pysio/Naids、GitHub 服务器源）。更新源改为读取配置项 `SystemUpdateSourceUrl`：
++  - **未配置（默认）**：不发出任何更新相关网络请求，自动更新/公告/版本检查全部跳过，本地构建不可能被官方版覆盖；
++  - **已配置**：指向自己的 Minio 格式发布仓库（如 GitHub 仓库 raw 地址），成为自己的发布通道。
++- 配置项位于 `PCL/config.v1.yml` 的 `SystemUpdateSourceUrl` 字段（设置页暂无输入框，直接编辑配置文件即可）。
++- 受守卫的调用点：启动自动检查（`ScheduleBasedOnConfig`）、手动检查（设置页 `IsLatestAsync`）、公告加载（`AnnouncementService`）、版本状态判定（`GetVersionStatus`，未配置时视为最新）。
++- 仓库文件布局（与社区服务器格式一致）：`apiv2/cache.json`、`apiv2/updates/updates-sr{x64|arm64}.json`（稳定）/`updates-fr{x64|arm64}.json`（测试）、`apiv2/announcement.json`、更新包下载地址（写在 updates JSON 的 `downloads` 数组中，可以是同仓库的 Release/文件直链）。
++
++### 版本号区分
++
++- `metadata.json` 的 `suffix` 设为 `local`，本地构建版本号显示为 **`2.15.1-local`**，与官方发布明确区分。
++
++## local.1 — 2026-10-31
++
++基于上游 v2.15.1（dev）。
++
++### 解除限制
++
++- **下载限制**：`RestrictedFeaturePolicy` 区域判定不再拦截任何功能（原逻辑保留于 `Assess()`，可恢复）。受影响的 9 处调用点全部放行：MC 客户端下载、版本/加载器安装、整合包安装、启动补全、实例修复/重置等。
++- **离线登录**：`CanCreateOtherProfile()` 始终允许创建离线/第三方档案（原发布版要求已有正版档案）；移除启动时无正版档案的「账号验证」强制弹窗（原会强制 `--demo` 或中止启动）。
++
++### 便携化
++
++- 首次运行或已存游戏文件夹失效时，默认使用启动器目录下的 `.minecraft`（不存在则自动创建含 `launcher_profiles.json`）；不再自动接管 `%APPDATA%\.minecraft` 等其他文件夹。启动器目录不可写时回退为扫描结果。
++
++### 崩溃日志诊断器扩展
++
++- 新增 15 个崩溃原因类别 + 21 条检测规则 + 提取器通用原生崩溃兜底：
++  - Java 环境（JVM 参数错误、Java 安装损坏）、栈溢出、压缩文件损坏、磁盘空间不足、文件被占用/杀软拦截、路径非法字符、存档锁占用、数据包不兼容、会话失效、服务器无法连接、模组侧向装错、无效模组文件、显存耗尽、原生访问冲突兜底。
++- 全部规则使用真实日志签名；文案覆盖 zh-CN（基础）/zh-TW/en-US/en-GB/fr-FR。
++
++### Java 下载增强
++
++- 无可用 Java 时的一键下载现支持**自由选择版本**：弹出 Mojang 运行时索引中所有可下载组件（Java 8/17/21 等，官方源优先、BMCLAPI 回退），与实例需求匹配的版本预选；列表获取失败时降级为原自动下载行为。三处调用点（启动检测、下载安装 ×2）全部接入。
++
++### 构建与性能
++
++- **内置 .NET**：自包含发布，无需安装 .NET 10 桌面运行时。
++- **启动速度**：实测对比后采用**不压缩自包含单文件**（热启动 ~0.9s，较压缩版快约 19%；代价 196 MB）。R2R 预编译实测无收益，未采用。
++- 后续重打命令：`dotnet publish "Plain Craft Launcher 2/Plain Craft Launcher 2.csproj" -c Release -p:Platform=x64 -p:SelfContained=true -o ./artifact`
++
++### 关闭联机功能
++
++- `LobbyService` 移除生命周期自动启动注册（后台轮询/世界发现不再随应用运行）。
++- 删除「更多」工具页「联机大厅」栏、「工具」分类标题；工具页默认落点改为「实用工具」。
++- 删除设置页「联机」条目及空置的「工具」分类。
++- 删除 设置 → 个性化 → 隐藏页面 中对应的「联机」「大厅」勾选框（同行复选框已补位），并清理 `HiddenRefresh` 协同逻辑。
++- `PCL.Core/Link` 代码与 `Resources/linkd.exe` 保留在工程中但不可达（最小化与上游 diff）。
++
++### 移除 MirrorChyan（镜像酱）
++
++- 删除 `UpdatesMirrorChyanModel` 更新源、更新源列表中的引用、`SystemMirrorChyanKey` 配置项。
++- 删除设置页「Mirror 酱 CDK」输入区（标签/密码框/获取按钮）与相关事件处理。
++- 删除 4 个语言文件中的 CDK 文案与 2 个 MirrorChyan CI 工作流，清理 `release-publish.yml` 触发步骤。
++- 更新通道现仅剩社区公益源（Pysio/Naids Minio）与 GitHub。
++
++### 依赖清理（漏洞检查结果）
++
++- `dotnet list package --vulnerable --include-transitive`：**两个工程均无易受攻击的依赖**。
++- 移除 5 个 NU1510 冗余引用（框架已内置）：`System.Net.Http` 4.3.4、`System.Text.RegularExpressions` 4.3.1（应用）；`Microsoft.CSharp`、`System.Security.Cryptography.ProtectedData`、`System.Text.Json`（Core）。
++
++### 已知风险与待办
++
++- ⚠️ **更新通道仍指向官方**：更新检查仍会拉取上游 Release，点击更新会被官方原版覆盖全部本地改动。处理方式见「后续更新方向」。
++- 通用解压助手（`ModBase.cs`）的 zip-slip 防护使用前缀比较（`StartsWithF`），存在兄弟目录前缀误匹配的理论缺陷，建议改用 `Files.IsPathWithinDirectory`。
++
++## 已改文件清单（相对上游 dev）
++
++`.github/workflows/release-publish.yml`（删除 MirrorChyan 触发）｜删除 `.github/workflows/mirrorchyan_*.yml`｜`PCL.Core/App/Config.cs`｜`PCL.Core/App/Localization/Languages/*.xaml` ×5｜`PCL.Core/Link/Lobby/LobbyService.cs`｜`PCL.Core/PCL.Core.csproj`｜`CrashAnalysis/*` ×4｜`Modules/Minecraft/ModJava.cs`、`ModLaunch.cs`、`ProfileUi.cs`、`RestrictedFeaturePolicy.cs`｜`Modules/Updates/UpdateManager.cs`｜删除 `Modules/Updates/UpdatesMirrorChyanModel.cs`｜`Pages/PageDownload/ModDownloadLib.cs`｜`Pages/PageLaunch/PageLaunchLeft.xaml.cs`｜`Pages/PageSetup/*` ×5｜`Pages/PageTools/PageToolsLeft.xaml(.cs)`｜删除 `Plain Craft Launcher 2.csproj` 冗余引用
+diff --git a/PCL.Core/App/Config.cs b/PCL.Core/App/Config.cs
+index d97d3fa..eed8052 100644
+--- a/PCL.Core/App/Config.cs
++++ b/PCL.Core/App/Config.cs
+@@ -126,11 +126,11 @@ public static partial class Config
+         /// 更新分支。
+         /// </summary>
+         [ConfigItem<UpdateChannel>("SystemUpdateChannel", UpdateChannel.Release, ConfigSource.Local)] public partial UpdateChannel UpdateChannel { get; set; }
+-            
++
+         /// <summary>
+-        /// Mirror 酱 CDK。
++        /// 自定义更新源地址（Minio 格式仓库的根地址，如 GitHub 仓库 raw 地址）。留空则不进行任何更新检查。
+         /// </summary>
+-        [ConfigItem<string>("SystemMirrorChyanKey", "", ConfigSource.SharedEncrypt)] public partial string MirrorChyanKey { get; set; }
++        [ConfigItem<string>("SystemUpdateSourceUrl", "", ConfigSource.Local)] public partial string SourceUrl { get; set; }
+     }
+ 
+     /// <summary>
+diff --git a/PCL.Core/App/Localization/Languages/en-GB.xaml b/PCL.Core/App/Localization/Languages/en-GB.xaml
+index 50040ce..8cdf378 100644
+--- a/PCL.Core/App/Localization/Languages/en-GB.xaml
++++ b/PCL.Core/App/Localization/Languages/en-GB.xaml
+@@ -127,8 +127,12 @@
+ 
+     <!-- Crash.Reason -->
+ 
++    <sys:String x:Key="Crash.Reason.BrokenJavaInstallation">The Java runtime in use may be corrupted or incomplete.</sys:String>
+     <sys:String x:Key="Crash.Reason.ConfirmedMod.Multiple">The following mods caused the error:&#xA;{0}</sys:String>
+     <sys:String x:Key="Crash.Reason.ConfirmedMod.Single">The mod {0} caused the error.</sys:String>
++    <sys:String x:Key="Crash.Reason.CorruptZipFile">A compressed file (such as a mod, resource pack, or game asset) is corrupted.</sys:String>
++    <sys:String x:Key="Crash.Reason.DatapackLoadFailed">Data packs in the save are incompatible with the current game version, so the world cannot load.</sys:String>
++    <sys:String x:Key="Crash.Reason.DiskSpaceInsufficient">There is not enough disk space for the game to write files.</sys:String>
+     <sys:String x:Key="Crash.Reason.DuplicateMods.Known">Duplicate mods were detected:&#xA;{0}</sys:String>
+     <sys:String x:Key="Crash.Reason.DuplicateMods.Unknown">Duplicate mods may be installed.</sys:String>
+     <sys:String x:Key="Crash.Reason.ExtractedModFile">An extracted mod file was detected.</sys:String>
+@@ -136,6 +140,7 @@
+     <sys:String x:Key="Crash.Reason.FabricError.WithDetail">Fabric provided the following error message:&#xA;{0}</sys:String>
+     <sys:String x:Key="Crash.Reason.FabricSolution.Generic">Fabric may have provided a solution.</sys:String>
+     <sys:String x:Key="Crash.Reason.FabricSolution.WithDetail">Fabric provided the following solution:&#xA;{0}</sys:String>
++    <sys:String x:Key="Crash.Reason.FileAccessDenied">A file is in use by another program or access is denied, possibly caused by antivirus software.</sys:String>
+     <sys:String x:Key="Crash.Reason.FileOrContentValidationFailed">Some files or content did not pass validation.</sys:String>
+     <sys:String x:Key="Crash.Reason.ForgeError.Generic">Forge may have provided an error message.</sys:String>
+     <sys:String x:Key="Crash.Reason.ForgeError.WithDetail">Forge provided the following error message:&#xA;{0}</sys:String>
+@@ -144,9 +149,12 @@
+     <sys:String x:Key="Crash.Reason.IncompatibleMods.Generic">The installed mods may be incompatible.</sys:String>
+     <sys:String x:Key="Crash.Reason.IncompatibleMods.WithDetail">The installed mods are incompatible:&#xA;{0}</sys:String>
+     <sys:String x:Key="Crash.Reason.IncompleteForgeInstallation">The Forge installation is incomplete and required files are missing.</sys:String>
++    <sys:String x:Key="Crash.Reason.InvalidModFile">A mod file is not a valid mod (missing mods.toml or corrupted).</sys:String>
+     <sys:String x:Key="Crash.Reason.InvalidModFileName">A mod file name contains special characters that Java cannot use.</sys:String>
++    <sys:String x:Key="Crash.Reason.InvalidPath">A file path contains invalid characters, or a file encoding problem exists.</sys:String>
+     <sys:String x:Key="Crash.Reason.JavaIncompatible">The selected Java version is incompatible with the game or mods.</sys:String>
+     <sys:String x:Key="Crash.Reason.JavaTooNew">The selected Java version is too new for this game or loader.</sys:String>
++    <sys:String x:Key="Crash.Reason.JvmArgumentError">The Java Virtual Machine arguments are invalid, so the game cannot start.</sys:String>
+     <sys:String x:Key="Crash.Reason.ManualDebugCrash">This was a manually triggered debug crash. The game itself is usually fine.</sys:String>
+     <sys:String x:Key="Crash.Reason.MissingDependency.Generic">Some mods are missing dependencies or do not match the current Minecraft version.</sys:String>
+     <sys:String x:Key="Crash.Reason.MissingDependency.WithDetail">Some mods are missing dependencies or do not match the current Minecraft version:&#xA;{0}</sys:String>
+@@ -162,15 +170,21 @@
+     <sys:String x:Key="Crash.Reason.ModMixinFailed.None">Mixin injection failed for one or more mods.</sys:String>
+     <sys:String x:Key="Crash.Reason.ModMixinFailed.Single">Mixin injection failed for the mod {0}.</sys:String>
+     <sys:String x:Key="Crash.Reason.ModRequiresJava11">Some installed mods require Java 11 or later.</sys:String>
++    <sys:String x:Key="Crash.Reason.ModSideMismatch">A mod loaded client-only or server-only code in an incompatible environment.</sys:String>
+     <sys:String x:Key="Crash.Reason.MultipleForgeInInstanceJson">The instance JSON contains multiple Forge version arguments.</sys:String>
++    <sys:String x:Key="Crash.Reason.NativeAccessViolation">The game process crashed natively (access violation), possibly related to graphics drivers or faulty memory.</sys:String>
+     <sys:String x:Key="Crash.Reason.NightConfigBug">Night Config encountered an error whilst reading configuration files.</sys:String>
+     <sys:String x:Key="Crash.Reason.NoAnalyzableFile">The game ran into a problem, but PCL CE could not find related log files to analyse.</sys:String>
+     <sys:String x:Key="Crash.Reason.OldForgeNewJavaIncompatible">An old Forge version is incompatible with the selected Java version.</sys:String>
+     <sys:String x:Key="Crash.Reason.OpenGl1282">A shader pack or resource pack may have triggered OpenGL error 1282.</sys:String>
++    <sys:String x:Key="Crash.Reason.OpenGlOutOfMemory">The graphics card is out of memory (GL_OUT_OF_MEMORY).</sys:String>
+     <sys:String x:Key="Crash.Reason.OptiFineForgeIncompatible">OptiFine may be incompatible with the current Forge or Minecraft version.</sys:String>
+     <sys:String x:Key="Crash.Reason.OptiFineWorldLoadCrash">The selected OptiFine version may have caused the world to fail to load.</sys:String>
+     <sys:String x:Key="Crash.Reason.OutOfMemory">Minecraft ran out of memory.</sys:String>
+     <sys:String x:Key="Crash.Reason.ResourcePackTooLarge">The resource pack resolution may be too high, or the graphics card may not be powerful enough.</sys:String>
++    <sys:String x:Key="Crash.Reason.ServerUnreachable">The game server could not be reached (connection refused).</sys:String>
++    <sys:String x:Key="Crash.Reason.SessionInvalid">The account session has expired; you cannot join servers that require premium authentication.</sys:String>
++    <sys:String x:Key="Crash.Reason.SessionLockFailed">The save may be in use by another process (such as another game instance or antivirus software), so the game cannot acquire the session lock.</sys:String>
+     <sys:String x:Key="Crash.Reason.ShadersModWithOptiFine">Both Shaders Mod and OptiFine are installed.</sys:String>
+     <sys:String x:Key="Crash.Reason.SpecificBlock.Multiple">Some blocks in the world may have caused the error.</sys:String>
+     <sys:String x:Key="Crash.Reason.SpecificBlock.Single">The block {0} may have caused the error.</sys:String>
+@@ -178,6 +192,7 @@
+     <sys:String x:Key="Crash.Reason.SpecificEntity.Single">The entity {0} may have caused the error.</sys:String>
+     <sys:String x:Key="Crash.Reason.StackKeyword.Multiple">PCL CE found possibly related keywords in the error stack trace:&#xA;{0}</sys:String>
+     <sys:String x:Key="Crash.Reason.StackKeyword.Single">PCL CE found a possibly related keyword in the error stack trace: {0}</sys:String>
++    <sys:String x:Key="Crash.Reason.StackOverflowError">The game hit infinite recursion or a circular call (StackOverflowError), usually caused by a mod or its config.</sys:String>
+     <sys:String x:Key="Crash.Reason.SuspectedMod.Multiple">The crash report suspects that the following mods caused the error:&#xA;{0}</sys:String>
+     <sys:String x:Key="Crash.Reason.SuspectedMod.Single">The crash report suspects that the mod {0} caused the error.</sys:String>
+     <sys:String x:Key="Crash.Reason.TooManyModsIdLimit">Too many mods are installed, exceeding the ID limit of an older Minecraft version.</sys:String>
+@@ -227,39 +242,54 @@
+ 
+     <!-- Crash.Suggestion -->
+ 
++    <sys:String x:Key="Crash.Suggestion.BrokenJavaInstallation">Switch to another Java in Settings → Launch Options → Game Java, or reinstall the current Java.</sys:String>
++    <sys:String x:Key="Crash.Suggestion.CorruptZipFile">Locate the corrupted file in the log, delete it, and download it again; if a mod is corrupted, re-download that mod.</sys:String>
++    <sys:String x:Key="Crash.Suggestion.DatapackLoadFailed">Back up the save, then remove incompatible data packs from the save's datapacks folder.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.DisableTheseMods">Try disabling these mods one by one, then check whether the game still crashes.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.DisableThisMod">Try disabling this mod, then check whether the game still crashes.</sys:String>
++    <sys:String x:Key="Crash.Suggestion.DiskSpaceInsufficient">Free up space on the disk where the game is located and try again.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.DuplicateMods">Each mod should be installed only once. Remove the duplicate mods and launch the game again.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.ExportReport">When asking for help, send the crash report file instead of a photo or screenshot of this window.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.ExtractedModFile">Remove extracted mod folders from the mods folder, then put the original .jar mod files there and try again.</sys:String>
++    <sys:String x:Key="Crash.Suggestion.FileAccessDenied">Add the game folder to your antivirus whitelist, close the program locking the file, and try again.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.FileOrContentValidationFailed">Delete the game and related mods, then download them again.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.FollowLoaderInstructions">Follow the loader messages above or in the crash report to resolve the problem.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.GraphicsDriver.Generic">Try updating or rolling back the graphics driver. If needed, switch to an older Java version.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.GraphicsDriver.IntelOrIntegrated">If the device has a dedicated GPU, use it to launch PCL CE and Minecraft. You can also update or roll back the graphics driver.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.IncompleteForgeInstallation">Reset or reinstall Forge in instance settings. Do not delete the libraries folder when packaging an instance.</sys:String>
++    <sys:String x:Key="Crash.Suggestion.InvalidModFile">Delete that mod file and download a complete copy again.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.InvalidModFileName">Remove or rename the affected mod file so that its name contains only English letters, numbers, hyphens, underscores, and periods.</sys:String>
++    <sys:String x:Key="Crash.Suggestion.InvalidPath">Check game paths and file names for special characters; avoid non-ASCII characters or symbols in paths.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.JavaIncompatible">Choose a suitable Java version in launch settings based on the Minecraft version and mod requirements.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.JavaTooNew">Switch to an older Java version in launch settings and try again.</sys:String>
++    <sys:String x:Key="Crash.Suggestion.JvmArgumentError">Check the JVM arguments and memory allocation in instance settings; clear custom JVM arguments if unsure.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.LauncherOutdated">You are using an outdated version of PCL CE. Updating PCL CE may resolve this problem: Settings → Launcher → Check updates.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.MissingMixinBootstrap">Check that MixinBootstrap, the mod loader, and related dependencies are installed correctly.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.ModConfigCrash">Try deleting this mod's configuration file and launch again. If needed, update or disable the mod.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.ModLoaderIncompatible">Open instance settings and adjust or reinstall the mod loader version.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.ModMixinFailed">Disable mods step by step to find the one that is incompatible with the current environment or has a problem.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.ModRequiresJava11">Switch to Java 11 or later in launch settings and try again.</sys:String>
++    <sys:String x:Key="Crash.Suggestion.ModSideMismatch">Remove server-only mods (usually with "Server" in the name), or switch to a version suited to the current environment.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.MultipleForgeInInstanceJson">Reset or reinstall Forge in instance settings. Do not use another launcher to modify the Forge version.</sys:String>
++    <sys:String x:Key="Crash.Suggestion.NativeAccessViolation">Try updating your graphics driver; if it happens frequently, check whether the system memory is stable.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.NightConfigBug">Try deleting the related mod configuration files, or install Night Config Fixes.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.OldForgeNewJavaIncompatible">Try updating Forge or switching to an older Java version.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.OpenGl1282">Disable shader packs and remove recently added resource packs, then try again.</sys:String>
++    <sys:String x:Key="Crash.Suggestion.OpenGlOutOfMemory">Lower the render distance, turn off shaders, or use a lower-resolution resource pack.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.OptiFineForgeIncompatible">Check the compatible OptiFine and Forge versions, then reinstall matching versions.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.OptiFineWorldLoadCrash">Try another OptiFine version, or remove OptiFine before entering the world again.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.OutOfMemory">Increase the memory allocated in launch settings, and remove demanding resource packs, mods, or shader packs. You can also close other applications before launching the game.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.ResourcePackTooLarge">Remove high-resolution resource packs or lower their resolution. You can also update the graphics driver.</sys:String>
++    <sys:String x:Key="Crash.Suggestion.ServerUnreachable">Verify the server address is correct and that the server is running.</sys:String>
++    <sys:String x:Key="Crash.Suggestion.SessionInvalid">Sign in again on the launch page, then retry.</sys:String>
++    <sys:String x:Key="Crash.Suggestion.SessionLockFailed">Close other programs using that save, check whether antivirus software is locking the save folder, and try again.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.ShadersModWithOptiFine">Remove Shaders Mod. OptiFine already provides shader support.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.SpecificBlock.Multiple">Create a new world to test whether the game runs normally. If it does, blocks in the original world may be responsible.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.SpecificBlock.Single">Create a new world to test whether the game runs normally. If it does, remove this block with a map editor or disable the mod that provides it.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.SpecificEntity.Multiple">Create a new world and spawn entities to test whether the game runs normally. If it does, entities in the original world may be responsible.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.SpecificEntity.Single">Create a new world and spawn this entity to test whether the game runs normally. If it does, remove the entity with a map editor or disable the mod that provides it.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.StackKeyword">Check the mods or libraries related to these keywords. You can also export the crash report for more details.</sys:String>
++    <sys:String x:Key="Crash.Suggestion.StackOverflowError">Check recently added mods and try disabling them one by one; if a mod config is suspected, delete that mod's config file and retry.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.TooManyModsIdLimit">Reduce the number of installed mods, or install a fix mod that extends the ID limit for older Minecraft versions.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.UsingJdk">Switch to a regular JRE or another Java version that is suitable for this instance in launch settings.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.UsingOpenJ9">Switch to HotSpot Java in launch settings and try again.</sys:String>
+@@ -2191,6 +2221,7 @@
+ 
+     <sys:String x:Key="Minecraft.Launch.Java.AutoDownload.Action">Download automatically</sys:String>
+     <sys:String x:Key="Minecraft.Launch.Java.AutoDownload.Message">PCL CE could not find {0}. Would you like PCL CE to download it automatically?&#xA;If you have already installed {0}, you can import it manually under Settings → Launch options → Game Java.</sys:String>
++    <sys:String x:Key="Minecraft.Launch.Java.AutoDownload.SelectTitle">Select the Java version to download (the recommended one is pre-selected)</sys:String>
+     <sys:String x:Key="Minecraft.Launch.Java.AutoDownload.Title">Download Java automatically?</sys:String>
+     <sys:String x:Key="Minecraft.Launch.Java.Compatibility.CheckFailed">Failed to check Java compatibility. See the details below.</sys:String>
+     <sys:String x:Key="Minecraft.Launch.Java.Compatibility.GlobalSelectedOutOfRange">The globally selected Java ({0}) is outside the required range [{1}, {2}] and may cause the game to crash.</sys:String>
+@@ -3189,9 +3220,6 @@
+     <sys:String x:Key="Setup.Update.Error.NetworkFailed">Unable to retrieve latest version information. Please check your network connection.</sys:String>
+     <sys:String x:Key="Setup.Update.Install">Download and install</sys:String>
+     <sys:String x:Key="Setup.Update.Latest">Already up to date</sys:String>
+-    <sys:String x:Key="Setup.Update.MirrorChyanCdk.Get">Get CDK</sys:String>
+-    <sys:String x:Key="Setup.Update.MirrorChyanCdk.Label">MirrorChyan CDK</sys:String>
+-    <sys:String x:Key="Setup.Update.MirrorChyanCdk.ToolTip">MirrorChyan (mirrorchyan.com) is a paid third-party application distribution platform that provides high-speed download sources in China.&#xA;This is an optional service. Leaving the CDK blank does not affect normal use or updates.&#xA;If you have a MirrorChyan CDK, you can provide it to PCL CE, and the launcher will prioritise its high-speed download source for software updates. This can also help reduce pressure on the community update server...</sys:String>
+     <sys:String x:Key="Setup.Update.OtherOptions.Placeholder">AquaCL 3 is the first major update of PCL CE. It brings a refreshing new design, uses the latest development technologies, completely rebuilds the core experience, and adds support for macOS, Linux, and other platforms.</sys:String>
+     <sys:String x:Key="Setup.Update.OtherOptions.Title">Other update options - upgrade to AquaCL</sys:String>
+     <sys:String x:Key="Setup.Update.RestartInstall">Restart to install</sys:String>
+diff --git a/PCL.Core/App/Localization/Languages/en-US.xaml b/PCL.Core/App/Localization/Languages/en-US.xaml
+index a3606d4..4de242a 100644
+--- a/PCL.Core/App/Localization/Languages/en-US.xaml
++++ b/PCL.Core/App/Localization/Languages/en-US.xaml
+@@ -160,8 +160,12 @@
+ 
+     <!-- Crash.Reason -->
+ 
++    <sys:String x:Key="Crash.Reason.BrokenJavaInstallation">The Java runtime in use may be corrupted or incomplete.</sys:String>
+     <sys:String x:Key="Crash.Reason.ConfirmedMod.Multiple">The following mods caused the error:&#xA;{0}</sys:String>
+     <sys:String x:Key="Crash.Reason.ConfirmedMod.Single">The mod {0} caused the error.</sys:String>
++    <sys:String x:Key="Crash.Reason.CorruptZipFile">A compressed file (such as a mod, resource pack, or game asset) is corrupted.</sys:String>
++    <sys:String x:Key="Crash.Reason.DatapackLoadFailed">Data packs in the save are incompatible with the current game version, so the world cannot load.</sys:String>
++    <sys:String x:Key="Crash.Reason.DiskSpaceInsufficient">There is not enough disk space for the game to write files.</sys:String>
+     <sys:String x:Key="Crash.Reason.DuplicateMods.Known">Duplicate mods were detected:&#xA;{0}</sys:String>
+     <sys:String x:Key="Crash.Reason.DuplicateMods.Unknown">Duplicate mods may be installed.</sys:String>
+     <sys:String x:Key="Crash.Reason.ExtractedModFile">An extracted mod file was detected.</sys:String>
+@@ -169,6 +173,7 @@
+     <sys:String x:Key="Crash.Reason.FabricError.WithDetail">Fabric provided the following error message:&#xA;{0}</sys:String>
+     <sys:String x:Key="Crash.Reason.FabricSolution.Generic">Fabric may have provided a solution.</sys:String>
+     <sys:String x:Key="Crash.Reason.FabricSolution.WithDetail">Fabric provided the following solution:&#xA;{0}</sys:String>
++    <sys:String x:Key="Crash.Reason.FileAccessDenied">A file is in use by another program or access is denied, possibly caused by antivirus software.</sys:String>
+     <sys:String x:Key="Crash.Reason.FileOrContentValidationFailed">Some files or content did not pass validation.</sys:String>
+     <sys:String x:Key="Crash.Reason.ForgeError.Generic">Forge may have provided an error message.</sys:String>
+     <sys:String x:Key="Crash.Reason.ForgeError.WithDetail">Forge provided the following error message:&#xA;{0}</sys:String>
+@@ -177,9 +182,12 @@
+     <sys:String x:Key="Crash.Reason.IncompatibleMods.Generic">The installed mods may be incompatible.</sys:String>
+     <sys:String x:Key="Crash.Reason.IncompatibleMods.WithDetail">The installed mods are incompatible:&#xA;{0}</sys:String>
+     <sys:String x:Key="Crash.Reason.IncompleteForgeInstallation">The Forge installation is incomplete and required files are missing.</sys:String>
++    <sys:String x:Key="Crash.Reason.InvalidModFile">A mod file is not a valid mod (missing mods.toml or corrupted).</sys:String>
+     <sys:String x:Key="Crash.Reason.InvalidModFileName">A mod file name contains special characters that Java cannot use.</sys:String>
++    <sys:String x:Key="Crash.Reason.InvalidPath">A file path contains invalid characters, or a file encoding problem exists.</sys:String>
+     <sys:String x:Key="Crash.Reason.JavaIncompatible">The selected Java version is incompatible with the game or mods.</sys:String>
+     <sys:String x:Key="Crash.Reason.JavaTooNew">The selected Java version is too new for this game or loader.</sys:String>
++    <sys:String x:Key="Crash.Reason.JvmArgumentError">The Java Virtual Machine arguments are invalid, so the game cannot start.</sys:String>
+     <sys:String x:Key="Crash.Reason.ManualDebugCrash">This was a manually triggered debug crash. The game itself is usually fine.</sys:String>
+     <sys:String x:Key="Crash.Reason.MissingDependency.Generic">Some mods are missing dependencies or do not match the current Minecraft version.</sys:String>
+     <sys:String x:Key="Crash.Reason.MissingDependency.WithDetail">Some mods are missing dependencies or do not match the current Minecraft version:&#xA;{0}</sys:String>
+@@ -195,15 +203,21 @@
+     <sys:String x:Key="Crash.Reason.ModMixinFailed.None">Mixin injection failed for one or more mods.</sys:String>
+     <sys:String x:Key="Crash.Reason.ModMixinFailed.Single">Mixin injection failed for the mod {0}.</sys:String>
+     <sys:String x:Key="Crash.Reason.ModRequiresJava11">Some installed mods require Java 11 or later.</sys:String>
++    <sys:String x:Key="Crash.Reason.ModSideMismatch">A mod loaded client-only or server-only code in an incompatible environment.</sys:String>
+     <sys:String x:Key="Crash.Reason.MultipleForgeInInstanceJson">The instance JSON contains multiple Forge version arguments.</sys:String>
++    <sys:String x:Key="Crash.Reason.NativeAccessViolation">The game process crashed natively (access violation), possibly related to graphics drivers or faulty memory.</sys:String>
+     <sys:String x:Key="Crash.Reason.NightConfigBug">Night Config encountered an error while reading configuration files.</sys:String>
+     <sys:String x:Key="Crash.Reason.NoAnalyzableFile">The game ran into a problem, but PCL CE could not find related log files to analyze.</sys:String>
+     <sys:String x:Key="Crash.Reason.OldForgeNewJavaIncompatible">An old Forge version is incompatible with the selected Java version.</sys:String>
+     <sys:String x:Key="Crash.Reason.OpenGl1282">A shader pack or resource pack may have triggered OpenGL error 1282.</sys:String>
++    <sys:String x:Key="Crash.Reason.OpenGlOutOfMemory">The graphics card is out of memory (GL_OUT_OF_MEMORY).</sys:String>
+     <sys:String x:Key="Crash.Reason.OptiFineForgeIncompatible">OptiFine may be incompatible with the current Forge or Minecraft version.</sys:String>
+     <sys:String x:Key="Crash.Reason.OptiFineWorldLoadCrash">The selected OptiFine version may have caused the world to fail to load.</sys:String>
+     <sys:String x:Key="Crash.Reason.OutOfMemory">Minecraft ran out of memory.</sys:String>
+     <sys:String x:Key="Crash.Reason.ResourcePackTooLarge">The resource pack resolution may be too high, or the graphics card may not be powerful enough.</sys:String>
++    <sys:String x:Key="Crash.Reason.ServerUnreachable">The game server could not be reached (connection refused).</sys:String>
++    <sys:String x:Key="Crash.Reason.SessionInvalid">The account session has expired; you cannot join servers that require premium authentication.</sys:String>
++    <sys:String x:Key="Crash.Reason.SessionLockFailed">The save may be in use by another process (such as another game instance or antivirus software), so the game cannot acquire the session lock.</sys:String>
+     <sys:String x:Key="Crash.Reason.ShadersModWithOptiFine">Both Shaders Mod and OptiFine are installed.</sys:String>
+     <sys:String x:Key="Crash.Reason.SpecificBlock.Multiple">Some blocks in the world may have caused the error.</sys:String>
+     <sys:String x:Key="Crash.Reason.SpecificBlock.Single">The block {0} may have caused the error.</sys:String>
+@@ -211,6 +225,7 @@
+     <sys:String x:Key="Crash.Reason.SpecificEntity.Single">The entity {0} may have caused the error.</sys:String>
+     <sys:String x:Key="Crash.Reason.StackKeyword.Multiple">PCL CE found possibly related keywords in the error stack trace:&#xA;{0}</sys:String>
+     <sys:String x:Key="Crash.Reason.StackKeyword.Single">PCL CE found a possibly related keyword in the error stack trace: {0}</sys:String>
++    <sys:String x:Key="Crash.Reason.StackOverflowError">The game hit infinite recursion or a circular call (StackOverflowError), usually caused by a mod or its config.</sys:String>
+     <sys:String x:Key="Crash.Reason.SuspectedMod.Multiple">The crash report suspects that the following mods caused the error:&#xA;{0}</sys:String>
+     <sys:String x:Key="Crash.Reason.SuspectedMod.Single">The crash report suspects that the mod {0} caused the error.</sys:String>
+     <sys:String x:Key="Crash.Reason.TooManyModsIdLimit">Too many mods are installed, exceeding the ID limit of an older Minecraft version.</sys:String>
+@@ -269,39 +284,54 @@
+ 
+     <!-- Crash.Suggestion -->
+ 
++    <sys:String x:Key="Crash.Suggestion.BrokenJavaInstallation">Switch to another Java in Settings → Launch Options → Game Java, or reinstall the current Java.</sys:String>
++    <sys:String x:Key="Crash.Suggestion.CorruptZipFile">Locate the corrupted file in the log, delete it, and download it again; if a mod is corrupted, re-download that mod.</sys:String>
++    <sys:String x:Key="Crash.Suggestion.DatapackLoadFailed">Back up the save, then remove incompatible data packs from the save's datapacks folder.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.DisableTheseMods">Try disabling these mods one by one, then check whether the game still crashes.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.DisableThisMod">Try disabling this mod, then check whether the game still crashes.</sys:String>
++    <sys:String x:Key="Crash.Suggestion.DiskSpaceInsufficient">Free up space on the disk where the game is located and try again.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.DuplicateMods">Each mod should be installed only once. Remove the duplicate mods and launch the game again.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.ExportReport">When asking for help, send the crash report file instead of a photo or screenshot of this window.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.ExtractedModFile">Remove extracted mod folders from the mods folder, then put the original .jar mod files there and try again.</sys:String>
++    <sys:String x:Key="Crash.Suggestion.FileAccessDenied">Add the game folder to your antivirus whitelist, close the program locking the file, and try again.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.FileOrContentValidationFailed">Delete the game and related mods, then download them again.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.FollowLoaderInstructions">Follow the loader messages above or in the crash report to resolve the problem.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.GraphicsDriver.Generic">Try updating or rolling back the graphics driver. If needed, switch to an older Java version.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.GraphicsDriver.IntelOrIntegrated">If the device has a dedicated GPU, use it to launch PCL CE and Minecraft. You can also update or roll back the graphics driver.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.IncompleteForgeInstallation">Reset or reinstall Forge in instance settings. Do not delete the libraries folder when packaging an instance.</sys:String>
++    <sys:String x:Key="Crash.Suggestion.InvalidModFile">Delete that mod file and download a complete copy again.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.InvalidModFileName">Remove or rename the affected mod file so that its name contains only English letters, numbers, hyphens, underscores, and periods.</sys:String>
++    <sys:String x:Key="Crash.Suggestion.InvalidPath">Check game paths and file names for special characters; avoid non-ASCII characters or symbols in paths.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.JavaIncompatible">Choose a suitable Java version in launch settings based on the Minecraft version and mod requirements.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.JavaTooNew">Switch to an older Java version in launch settings and try again.</sys:String>
++    <sys:String x:Key="Crash.Suggestion.JvmArgumentError">Check the JVM arguments and memory allocation in instance settings; clear custom JVM arguments if unsure.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.LauncherOutdated">You are using an outdated version of PCL CE. Updating PCL CE may resolve this problem: Settings → Launcher → Check updates.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.MissingMixinBootstrap">Check that MixinBootstrap, the mod loader, and related dependencies are installed correctly.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.ModConfigCrash">Try deleting this mod's configuration file and launch again. If needed, update or disable the mod.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.ModLoaderIncompatible">Open instance settings and adjust or reinstall the mod loader version.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.ModMixinFailed">Disable mods step by step to find the one that is incompatible with the current environment or has a problem.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.ModRequiresJava11">Switch to Java 11 or later in launch settings and try again.</sys:String>
++    <sys:String x:Key="Crash.Suggestion.ModSideMismatch">Remove server-only mods (usually with "Server" in the name), or switch to a version suited to the current environment.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.MultipleForgeInInstanceJson">Reset or reinstall Forge in instance settings. Do not use another launcher to modify the Forge version.</sys:String>
++    <sys:String x:Key="Crash.Suggestion.NativeAccessViolation">Try updating your graphics driver; if it happens frequently, check whether the system memory is stable.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.NightConfigBug">Try deleting the related mod configuration files, or install Night Config Fixes.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.OldForgeNewJavaIncompatible">Try updating Forge or switching to an older Java version.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.OpenGl1282">Disable shader packs and remove recently added resource packs, then try again.</sys:String>
++    <sys:String x:Key="Crash.Suggestion.OpenGlOutOfMemory">Lower the render distance, turn off shaders, or use a lower-resolution resource pack.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.OptiFineForgeIncompatible">Check the compatible OptiFine and Forge versions, then reinstall matching versions.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.OptiFineWorldLoadCrash">Try another OptiFine version, or remove OptiFine before entering the world again.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.OutOfMemory">Increase the memory allocated in launch settings, and remove demanding resource packs, mods, or shader packs. You can also close other applications before launching the game.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.ResourcePackTooLarge">Remove high-resolution resource packs or lower their resolution. You can also update the graphics driver.</sys:String>
++    <sys:String x:Key="Crash.Suggestion.ServerUnreachable">Verify the server address is correct and that the server is running.</sys:String>
++    <sys:String x:Key="Crash.Suggestion.SessionInvalid">Sign in again on the launch page, then retry.</sys:String>
++    <sys:String x:Key="Crash.Suggestion.SessionLockFailed">Close other programs using that save, check whether antivirus software is locking the save folder, and try again.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.ShadersModWithOptiFine">Remove Shaders Mod. OptiFine already provides shader support.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.SpecificBlock.Multiple">Create a new world to test whether the game runs normally. If it does, blocks in the original world may be responsible.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.SpecificBlock.Single">Create a new world to test whether the game runs normally. If it does, remove this block with a map editor or disable the mod that provides it.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.SpecificEntity.Multiple">Create a new world and spawn entities to test whether the game runs normally. If it does, entities in the original world may be responsible.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.SpecificEntity.Single">Create a new world and spawn this entity to test whether the game runs normally. If it does, remove the entity with a map editor or disable the mod that provides it.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.StackKeyword">Check the mods or libraries related to these keywords. You can also export the crash report for more details.</sys:String>
++    <sys:String x:Key="Crash.Suggestion.StackOverflowError">Check recently added mods and try disabling them one by one; if a mod config is suspected, delete that mod's config file and retry.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.TooManyModsIdLimit">Reduce the number of installed mods, or install a fix mod that extends the ID limit for older Minecraft versions.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.UsingJdk">Switch to a regular JRE or another Java version that is suitable for this instance in launch settings.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.UsingOpenJ9">Switch to HotSpot Java in launch settings and try again.</sys:String>
+@@ -2283,6 +2313,7 @@
+ 
+     <sys:String x:Key="Minecraft.Launch.Java.AutoDownload.Action">Download automatically</sys:String>
+     <sys:String x:Key="Minecraft.Launch.Java.AutoDownload.Message">PCL CE could not find {0}. Would you like PCL CE to download it automatically?&#xA;If you have already installed {0}, you can import it manually under Settings → Launch options → Game Java.</sys:String>
++    <sys:String x:Key="Minecraft.Launch.Java.AutoDownload.SelectTitle">Select the Java version to download (the recommended one is pre-selected)</sys:String>
+     <sys:String x:Key="Minecraft.Launch.Java.AutoDownload.Title">Download Java automatically?</sys:String>
+     <sys:String x:Key="Minecraft.Launch.Java.Compatibility.CheckFailed">Failed to check Java compatibility. See the details below.</sys:String>
+     <sys:String x:Key="Minecraft.Launch.Java.Compatibility.GlobalSelectedOutOfRange">The globally selected Java ({0}) is outside the required range [{1}, {2}] and may cause the game to crash.</sys:String>
+@@ -3296,9 +3327,6 @@
+     <sys:String x:Key="Setup.Update.Error.NetworkFailed">Unable to retrieve latest version information. Please check your network connection.</sys:String>
+     <sys:String x:Key="Setup.Update.Install">Download and install</sys:String>
+     <sys:String x:Key="Setup.Update.Latest">Already up to date</sys:String>
+-    <sys:String x:Key="Setup.Update.MirrorChyanCdk.Get">Get CDK</sys:String>
+-    <sys:String x:Key="Setup.Update.MirrorChyanCdk.Label">MirrorChyan CDK</sys:String>
+-    <sys:String x:Key="Setup.Update.MirrorChyanCdk.ToolTip">MirrorChyan (mirrorchyan.com) is a paid third-party application distribution platform that provides high-speed download sources in China.&#xA;This is an optional service. Leaving the CDK blank does not affect normal use or updates.&#xA;If you have a MirrorChyan CDK, you can provide it to PCL CE, and the launcher will prioritize its high-speed download source for software updates. This can also help reduce pressure on the community update server...</sys:String>
+     <sys:String x:Key="Setup.Update.OtherOptions.Placeholder">AquaCL 3 is the first major update of PCL CE. It brings a refreshing new design, uses the latest development technologies, completely rebuilds the core experience, and adds support for macOS, Linux, and other platforms.</sys:String>
+     <sys:String x:Key="Setup.Update.OtherOptions.Title">Other update options - upgrade to AquaCL</sys:String>
+     <sys:String x:Key="Setup.Update.RestartInstall">Restart to install</sys:String>
+diff --git a/PCL.Core/App/Localization/Languages/fr-FR.xaml b/PCL.Core/App/Localization/Languages/fr-FR.xaml
+index 4bbb337..49f5a59 100644
+--- a/PCL.Core/App/Localization/Languages/fr-FR.xaml
++++ b/PCL.Core/App/Localization/Languages/fr-FR.xaml
+@@ -126,8 +126,12 @@
+ 
+     <!-- Crash.Reason -->
+ 
++    <sys:String x:Key="Crash.Reason.BrokenJavaInstallation">L'environnement d'exécution Java utilisé est peut-être corrompu ou incomplet.</sys:String>
+     <sys:String x:Key="Crash.Reason.ConfirmedMod.Multiple">Les mods suivants ont causé l'erreur:&#xA;{0}</sys:String>
+     <sys:String x:Key="Crash.Reason.ConfirmedMod.Single">Le mod {0} a causé l'erreur.</sys:String>
++    <sys:String x:Key="Crash.Reason.CorruptZipFile">Un fichier compressé (tel qu'un mod, un pack de ressources ou une ressource du jeu) est corrompu.</sys:String>
++    <sys:String x:Key="Crash.Reason.DatapackLoadFailed">Les packs de données de la sauvegarde sont incompatibles avec la version actuelle du jeu, le monde ne peut pas être chargé.</sys:String>
++    <sys:String x:Key="Crash.Reason.DiskSpaceInsufficient">L'espace disque est insuffisant, le jeu ne peut pas écrire de fichiers.</sys:String>
+     <sys:String x:Key="Crash.Reason.DuplicateMods.Known">Des mods en double ont été détectés:&#xA;{0}</sys:String>
+     <sys:String x:Key="Crash.Reason.DuplicateMods.Unknown">Des mods en double peuvent être installés.</sys:String>
+     <sys:String x:Key="Crash.Reason.ExtractedModFile">Un fichier de mod extrait a été détecté.</sys:String>
+@@ -135,6 +139,7 @@
+     <sys:String x:Key="Crash.Reason.FabricError.WithDetail">Fabric a fourni le message d'erreur suivant:&#xA;{0}</sys:String>
+     <sys:String x:Key="Crash.Reason.FabricSolution.Generic">Fabric a peut-être fourni une solution.</sys:String>
+     <sys:String x:Key="Crash.Reason.FabricSolution.WithDetail">Fabric a fourni la solution suivante:&#xA;{0}</sys:String>
++    <sys:String x:Key="Crash.Reason.FileAccessDenied">Un fichier est utilisé par un autre programme ou l'accès est refusé, peut-être à cause d'un antivirus.</sys:String>
+     <sys:String x:Key="Crash.Reason.FileOrContentValidationFailed">Certains fichiers ou contenus n'ont pas passé la validation.</sys:String>
+     <sys:String x:Key="Crash.Reason.ForgeError.Generic">Forge a peut-être fourni un message d'erreur.</sys:String>
+     <sys:String x:Key="Crash.Reason.ForgeError.WithDetail">Forge a fourni le message d'erreur suivant:&#xA;{0}</sys:String>
+@@ -143,9 +148,12 @@
+     <sys:String x:Key="Crash.Reason.IncompatibleMods.Generic">Les mods installés peuvent être incompatibles.</sys:String>
+     <sys:String x:Key="Crash.Reason.IncompatibleMods.WithDetail">Les mods installés sont incompatibles:&#xA;{0}</sys:String>
+     <sys:String x:Key="Crash.Reason.IncompleteForgeInstallation">L'installation de Forge est incomplète et des fichiers nécessaires sont manquants.</sys:String>
++    <sys:String x:Key="Crash.Reason.InvalidModFile">Un fichier de mod n'est pas un mod valide (mods.toml manquant ou fichier corrompu).</sys:String>
+     <sys:String x:Key="Crash.Reason.InvalidModFileName">Un nom de fichier de mod contient des caractères spéciaux que Java ne peut pas utiliser.</sys:String>
++    <sys:String x:Key="Crash.Reason.InvalidPath">Un chemin de fichier contient des caractères invalides, ou un problème d'encodage existe.</sys:String>
+     <sys:String x:Key="Crash.Reason.JavaIncompatible">La version Java sélectionnée est incompatible avec le jeu ou les mods.</sys:String>
+     <sys:String x:Key="Crash.Reason.JavaTooNew">La version Java sélectionnée est trop récente pour ce jeu ou ce chargeur.</sys:String>
++    <sys:String x:Key="Crash.Reason.JvmArgumentError">Les arguments de la machine virtuelle Java sont invalides, le jeu ne peut pas démarrer.</sys:String>
+     <sys:String x:Key="Crash.Reason.MissingDependency.Generic">Certains mods manquent de dépendances ou ne correspondent pas à la version actuelle de Minecraft.</sys:String>
+     <sys:String x:Key="Crash.Reason.MissingDependency.WithDetail">Certains mods manquent de dépendances ou ne correspondent pas à la version actuelle de Minecraft:&#xA;{0}</sys:String>
+     <sys:String x:Key="Crash.Reason.MissingMixinBootstrap">MixinBootstrap est manquant, le jeu ne peut donc pas continuer le chargement.</sys:String>
+@@ -160,15 +168,21 @@
+     <sys:String x:Key="Crash.Reason.ModMixinFailed.None">L'injection Mixin a échoué pour un ou plusieurs mods.</sys:String>
+     <sys:String x:Key="Crash.Reason.ModMixinFailed.Single">L'injection Mixin a échoué pour le mod {0}.</sys:String>
+     <sys:String x:Key="Crash.Reason.ModRequiresJava11">Certains mods installés nécessitent Java 11 ou une version ultérieure.</sys:String>
++    <sys:String x:Key="Crash.Reason.ModSideMismatch">Un mod a chargé du code réservé au client ou au serveur dans un environnement incompatible.</sys:String>
+     <sys:String x:Key="Crash.Reason.MultipleForgeInInstanceJson">L'instance JSON contient plusieurs arguments de version Forge.</sys:String>
++    <sys:String x:Key="Crash.Reason.NativeAccessViolation">Le processus du jeu s'est arrêté anormalement de façon native (violation d'accès), possiblement lié au pilote graphique ou à une défaillance mémoire.</sys:String>
+     <sys:String x:Key="Crash.Reason.NightConfigBug">Night Config a rencontré une erreur lors de la lecture des fichiers de configuration.</sys:String>
+     <sys:String x:Key="Crash.Reason.NoAnalyzableFile">Le jeu a rencontré un problème, mais PCL CE n'a pas pu trouver de fichiers journaux associés à analyser.</sys:String>
+     <sys:String x:Key="Crash.Reason.OldForgeNewJavaIncompatible">Une ancienne version de Forge est incompatible avec la version Java sélectionnée.</sys:String>
+     <sys:String x:Key="Crash.Reason.OpenGl1282">Un pack de shaders ou de ressources peut avoir déclenché l'erreur OpenGL 1282.</sys:String>
++    <sys:String x:Key="Crash.Reason.OpenGlOutOfMemory">La mémoire vidéo de la carte graphique est insuffisante (GL_OUT_OF_MEMORY).</sys:String>
+     <sys:String x:Key="Crash.Reason.OptiFineForgeIncompatible">OptiFine peut être incompatible avec la version actuelle de Forge ou de Minecraft.</sys:String>
+     <sys:String x:Key="Crash.Reason.OptiFineWorldLoadCrash">La version d'OptiFine sélectionnée a pu causer l'échec du chargement du monde.</sys:String>
+     <sys:String x:Key="Crash.Reason.OutOfMemory">Minecraft a manqué de mémoire.</sys:String>
+     <sys:String x:Key="Crash.Reason.ResourcePackTooLarge">La résolution du pack de ressources est peut-être trop élevée, ou la carte graphique n'est pas assez puissante.</sys:String>
++    <sys:String x:Key="Crash.Reason.ServerUnreachable">Le serveur de jeu est injoignable (connexion refusée).</sys:String>
++    <sys:String x:Key="Crash.Reason.SessionInvalid">La session du compte a expiré ; impossible de rejoindre des serveurs exigeant une authentification premium.</sys:String>
++    <sys:String x:Key="Crash.Reason.SessionLockFailed">La sauvegarde est peut-être utilisée par un autre processus (comme une autre instance du jeu ou un antivirus), le jeu ne peut pas obtenir le verrou de session.</sys:String>
+     <sys:String x:Key="Crash.Reason.ShadersModWithOptiFine">Shaders Mod et OptiFine sont tous deux installés.</sys:String>
+     <sys:String x:Key="Crash.Reason.SpecificBlock.Multiple">Certains blocs dans le monde peuvent avoir causé l'erreur.</sys:String>
+     <sys:String x:Key="Crash.Reason.SpecificBlock.Single">Le bloc {0} peut avoir causé l'erreur.</sys:String>
+@@ -176,6 +190,7 @@
+     <sys:String x:Key="Crash.Reason.SpecificEntity.Single">L'entité {0} peut avoir causé l'erreur.</sys:String>
+     <sys:String x:Key="Crash.Reason.StackKeyword.Multiple">PCL CE a trouvé des mots-clés possiblement liés dans la trace de pile d'erreurs:&#xA;{0}</sys:String>
+     <sys:String x:Key="Crash.Reason.StackKeyword.Single">PCL CE a trouvé un mot-clé possiblement lié dans la trace de pile d'erreurs: {0}</sys:String>
++    <sys:String x:Key="Crash.Reason.StackOverflowError">Le jeu a rencontré une récursion infinie ou un appel circulaire (StackOverflowError), généralement causé par un mod ou sa configuration.</sys:String>
+     <sys:String x:Key="Crash.Reason.SuspectedMod.Multiple">Le rapport de crash soupçonne que les mods suivants ont causé l'erreur:&#xA;{0}</sys:String>
+     <sys:String x:Key="Crash.Reason.SuspectedMod.Single">Le rapport de crash soupçonne que le mod {0} a causé l'erreur.</sys:String>
+     <sys:String x:Key="Crash.Reason.TooManyModsIdLimit">Trop de mods sont installés, dépassant la limite d'ID d'une ancienne version de Minecraft.</sys:String>
+@@ -223,38 +238,53 @@
+ 
+     <!-- Crash.Suggestion -->
+ 
++    <sys:String x:Key="Crash.Suggestion.BrokenJavaInstallation">Changez de Java dans Paramètres → Options de lancement → Java du jeu, ou réinstallez le Java actuel.</sys:String>
++    <sys:String x:Key="Crash.Suggestion.CorruptZipFile">Repérez le fichier corrompu dans le journal, supprimez-le, puis téléchargez-le à nouveau ; si un mod est corrompu, retéléchargez ce mod.</sys:String>
++    <sys:String x:Key="Crash.Suggestion.DatapackLoadFailed">Sauvegardez le monde, puis retirez les packs de données incompatibles du dossier datapacks de la sauvegarde.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.DisableTheseMods">Essayez de désactiver ces mods un par un, puis vérifiez si le jeu plante encore.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.DisableThisMod">Essayez de désactiver ce mod, puis vérifiez si le jeu plante encore.</sys:String>
++    <sys:String x:Key="Crash.Suggestion.DiskSpaceInsufficient">Libérez de l'espace sur le disque où se trouve le jeu, puis réessayez.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.DuplicateMods">Chaque mod ne doit être installé qu'une seule fois. Supprimez les mods en double et relancez le jeu.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.ExtractedModFile">Supprimez les dossiers de mods extraits du dossier mods, puis placez-y les fichiers .jar originaux des mods et réessayez.</sys:String>
++    <sys:String x:Key="Crash.Suggestion.FileAccessDenied">Ajoutez le dossier du jeu à la liste blanche de l'antivirus, fermez le programme qui verrouille le fichier, puis réessayez.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.FileOrContentValidationFailed">Supprimez le jeu et les mods associés, puis téléchargez-les à nouveau.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.FollowLoaderInstructions">Suivez les messages du chargeur ci-dessus ou dans le rapport de crash pour résoudre le problème.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.GraphicsDriver.Generic">Essayez de mettre à jour ou de rétrograder le pilote graphique. Si nécessaire, passez à une version plus ancienne de Java.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.GraphicsDriver.IntelOrIntegrated">Si l'appareil dispose d'un GPU dédié, utilisez-le pour lancer PCL CE et Minecraft. Vous pouvez aussi mettre à jour ou rétrograder le pilote graphique.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.IncompleteForgeInstallation">Réinitialisez ou réinstallez Forge dans les paramètres de l'instance. Ne supprimez pas le dossier libraries lors de l'empaquetage d'une instance.</sys:String>
++    <sys:String x:Key="Crash.Suggestion.InvalidModFile">Supprimez ce fichier de mod et retéléchargez une version complète.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.InvalidModFileName">Supprimez ou renommez le fichier de mod concerné afin que son nom ne contienne que des lettres anglaises, des chiffres, des traits d'union, des traits de soulignement et des points.</sys:String>
++    <sys:String x:Key="Crash.Suggestion.InvalidPath">Vérifiez que le chemin du jeu et les noms de fichiers ne contiennent pas de caractères spéciaux ; évitez si possible les caractères non latins ou les symboles dans les chemins.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.JavaIncompatible">Choisissez une version Java adaptée dans les paramètres de lancement selon la version de Minecraft et les exigences des mods.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.JavaTooNew">Dans les paramètres de lancement, passez à une version plus ancienne de Java, puis réessayez.</sys:String>
++    <sys:String x:Key="Crash.Suggestion.JvmArgumentError">Vérifiez les arguments JVM et l'allocation mémoire dans les paramètres de l'instance ; effacez les arguments JVM personnalisés en cas de doute.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.LauncherOutdated">Vous utilisez une version obsolète de PCL CE. La mise à jour de PCL CE peut résoudre ce problème: Paramètres → Lanceur → Vérifier les mises à jour.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.MissingMixinBootstrap">Vérifiez que MixinBootstrap, le chargeur de mods et les dépendances associées sont correctement installés.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.ModConfigCrash">Essayez de supprimer le fichier de configuration de ce mod, puis relancez le jeu. Si nécessaire, mettez à jour ou désactivez le mod.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.ModLoaderIncompatible">Ouvrez les paramètres de l'instance et ajustez ou réinstallez la version du chargeur de mods.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.ModMixinFailed">Désactivez les mods un par un pour identifier celui qui est incompatible avec l'environnement actuel ou qui pose problème.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.ModRequiresJava11">Dans les paramètres de lancement, passez à Java 11 ou une version ultérieure, puis réessayez.</sys:String>
++    <sys:String x:Key="Crash.Suggestion.ModSideMismatch">Retirez les mods réservés au serveur (généralement avec « Server » dans le nom), ou utilisez une version adaptée à l'environnement actuel.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.MultipleForgeInInstanceJson">Réinitialisez ou réinstallez Forge dans les paramètres de l'instance. N'utilisez pas un autre lanceur pour modifier la version de Forge.</sys:String>
++    <sys:String x:Key="Crash.Suggestion.NativeAccessViolation">Essayez de mettre à jour le pilote graphique ; si cela se produit souvent, vérifiez la stabilité de la mémoire système.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.NightConfigBug">Essayez de supprimer les fichiers de configuration des mods concernés, ou installez Night Config Fixes.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.OldForgeNewJavaIncompatible">Essayez de mettre à jour Forge ou de passer à une version plus ancienne de Java.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.OpenGl1282">Désactivez les packs de shaders et supprimez les packs de ressources récemment ajoutés, puis réessayez.</sys:String>
++    <sys:String x:Key="Crash.Suggestion.OpenGlOutOfMemory">Réduisez la distance de rendu, désactivez les shaders, ou utilisez un pack de ressources de résolution inférieure.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.OptiFineForgeIncompatible">Check the compatible OptiFine and Forge versions, then reinstall matching versions.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.OptiFineWorldLoadCrash">Essayez une autre version d'OptiFine, ou retirez OptiFine avant de réessayer d'entrer dans le monde.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.OutOfMemory">Augmentez la mémoire allouée au jeu dans les paramètres de lancement, et supprimez les packs de ressources, mods ou packs de shaders gourmands en ressources. Vous pouvez également fermer d'autres applications avant de lancer le jeu.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.ResourcePackTooLarge">Supprimez les packs de ressources haute résolution ou réduisez leur résolution. Vous pouvez également mettre à jour le pilote graphique.</sys:String>
++    <sys:String x:Key="Crash.Suggestion.ServerUnreachable">Vérifiez que l'adresse du serveur est correcte et que le serveur est bien en ligne.</sys:String>
++    <sys:String x:Key="Crash.Suggestion.SessionInvalid">Reconnectez-vous sur la page de lancement, puis réessayez.</sys:String>
++    <sys:String x:Key="Crash.Suggestion.SessionLockFailed">Fermez les autres programmes utilisant cette sauvegarde, vérifiez que l'antivirus ne verrouille pas le dossier de la sauvegarde, puis réessayez.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.ShadersModWithOptiFine">Supprimez Shaders Mod. OptiFine prend déjà en charge les shaders.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.SpecificBlock.Multiple">Créez un nouveau monde pour vérifier si le jeu fonctionne normalement. Si c'est le cas, les blocs du monde d'origine peuvent être en cause.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.SpecificBlock.Single">Créez un nouveau monde pour vérifier si le jeu fonctionne normalement. Si c'est le cas, supprimez ce bloc avec un éditeur de carte ou désactivez le mod qui le fournit.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.SpecificEntity.Multiple">Créez un nouveau monde et faites apparaître des entités pour vérifier si le jeu fonctionne normalement. Si c'est le cas, les entités du monde d'origine peuvent être en cause.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.SpecificEntity.Single">Créez un nouveau monde et faites apparaître cette entité pour vérifier si le jeu fonctionne normalement. Si c'est le cas, supprimez l'entité avec un éditeur de carte ou désactivez le mod qui la fournit.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.StackKeyword">Vérifiez les mods ou bibliothèques correspondant à ces mots-clés. Vous pouvez également exporter le rapport de crash pour plus de détails.</sys:String>
++    <sys:String x:Key="Crash.Suggestion.StackOverflowError">Vérifiez les mods récemment ajoutés et essayez de les désactiver un par un ; si la configuration d'un mod est suspectée, supprimez son fichier de configuration et réessayez.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.TooManyModsIdLimit">Réduisez le nombre de mods installés, ou installez un mod correctif qui étend la limite d'ID pour les anciennes versions de Minecraft.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.UsingJdk">Dans les paramètres de lancement, passez à un JRE standard ou à une autre version de Java adaptée à cette instance.</sys:String>
+     <sys:String x:Key="Crash.Suggestion.UsingOpenJ9">Dans les paramètres de lancement, passez à HotSpot Java, puis réessayez.</sys:String>
+diff --git a/PCL.Core/App/Localization/Languages/zh-CN.xaml b/PCL.Core/App/Localization/Languages/zh-CN.xaml
+index 689c7d8..589402f 100644
+--- a/PCL.Core/App/Localization/Languages/zh-CN.xaml
++++ b/PCL.Core/App/Localization/Languages/zh-CN.xaml
+@@ -160,8 +160,12 @@
+ 
+     <!-- Crash.Reason -->
+ 
++    <sys:String x:Key="Crash.Reason.BrokenJavaInstallation">当前使用的 Java 运行环境可能已损坏或不完整。</sys:String>
+     <sys:String x:Key="Crash.Reason.ConfirmedMod.Multiple">以下模组导致了游戏出错：&#xA;{0}</sys:String>
+     <sys:String x:Key="Crash.Reason.ConfirmedMod.Single">模组 {0} 导致了游戏出错。</sys:String>
++    <sys:String x:Key="Crash.Reason.CorruptZipFile">某个压缩文件（如模组、资源包或游戏资源）已损坏。</sys:String>
++    <sys:String x:Key="Crash.Reason.DatapackLoadFailed">存档中的数据包与当前游戏版本不兼容，世界无法加载。</sys:String>
++    <sys:String x:Key="Crash.Reason.DiskSpaceInsufficient">磁盘空间不足，游戏无法写入文件。</sys:String>
+     <sys:String x:Key="Crash.Reason.DuplicateMods.Known">检测到重复安装的模组：&#xA;{0}</sys:String>
+     <sys:String x:Key="Crash.Reason.DuplicateMods.Unknown">可能安装了重复的模组。</sys:String>
+     <sys:String x:Key="Crash.Reason.ExtractedModFile">检测到已被解压的模组文件。</sys:String>
+@@ -169,6 +173,7 @@
+     <sys:String x:Key="Crash.Reason.FabricError.WithDetail">Fabric 提供了以下错误信息：&#xA;{0}</sys:String>
+     <sys:String x:Key="Crash.Reason.FabricSolution.Generic">Fabric 可能已经提供了解决方案。</sys:String>
+     <sys:String x:Key="Crash.Reason.FabricSolution.WithDetail">Fabric 提供了以下解决方案：&#xA;{0}</sys:String>
++    <sys:String x:Key="Crash.Reason.FileAccessDenied">有文件被其他程序占用或拒绝访问，可能由杀毒软件引起。</sys:String>
+     <sys:String x:Key="Crash.Reason.FileOrContentValidationFailed">部分文件或内容未能通过校验。</sys:String>
+     <sys:String x:Key="Crash.Reason.ForgeError.Generic">Forge 可能已经提供了错误信息。</sys:String>
+     <sys:String x:Key="Crash.Reason.ForgeError.WithDetail">Forge 提供了以下错误信息：&#xA;{0}</sys:String>
+@@ -177,9 +182,12 @@
+     <sys:String x:Key="Crash.Reason.IncompatibleMods.Generic">已安装的模组可能不兼容。</sys:String>
+     <sys:String x:Key="Crash.Reason.IncompatibleMods.WithDetail">已安装的模组不兼容：&#xA;{0}</sys:String>
+     <sys:String x:Key="Crash.Reason.IncompleteForgeInstallation">Forge 安装不完整，缺少必要文件。</sys:String>
++    <sys:String x:Key="Crash.Reason.InvalidModFile">某个模组文件不是有效的模组文件（缺少 mods.toml 或已损坏）。</sys:String>
+     <sys:String x:Key="Crash.Reason.InvalidModFileName">某个模组文件名包含 Java 不支持的特殊字符。</sys:String>
++    <sys:String x:Key="Crash.Reason.InvalidPath">某个文件路径包含非法字符，或文件编码存在问题。</sys:String>
+     <sys:String x:Key="Crash.Reason.JavaIncompatible">当前 Java 版本与游戏或模组不兼容。</sys:String>
+     <sys:String x:Key="Crash.Reason.JavaTooNew">当前 Java 版本对该游戏或加载器来说过高。</sys:String>
++    <sys:String x:Key="Crash.Reason.JvmArgumentError">Java 虚拟机参数无效，游戏无法启动。</sys:String>
+     <sys:String x:Key="Crash.Reason.ManualDebugCrash">这是手动触发的调试崩溃，游戏本身通常没有问题。</sys:String>
+     <sys:String x:Key="Crash.Reason.MissingDependency.Generic">部分模组缺少前置，或与当前 Minecraft 版本不匹配。</sys:String>
+     <sys:String x:Key="Crash.Reason.MissingDependency.WithDetail">部分模组缺少前置，或与当前 Minecraft 版本不匹配：&#xA;{0}</sys:String>
+@@ -195,15 +203,21 @@
+     <sys:String x:Key="Crash.Reason.ModMixinFailed.None">部分模组的 Mixin 注入失败。</sys:String>
+     <sys:String x:Key="Crash.Reason.ModMixinFailed.Single">模组 {0} 的 Mixin 注入失败。</sys:String>
+     <sys:String x:Key="Crash.Reason.ModRequiresJava11">部分已安装模组需要 Java 11 或更高版本。</sys:String>
++    <sys:String x:Key="Crash.Reason.ModSideMismatch">有模组在不兼容的环境中加载了客户端或服务端专用代码。</sys:String>
+     <sys:String x:Key="Crash.Reason.MultipleForgeInInstanceJson">实例 JSON 中包含多个 Forge 版本参数。</sys:String>
++    <sys:String x:Key="Crash.Reason.NativeAccessViolation">游戏进程发生了原生崩溃（访问冲突），可能与显卡驱动或内存故障有关。</sys:String>
+     <sys:String x:Key="Crash.Reason.NightConfigBug">Night Config 读取配置时发生错误。</sys:String>
+     <sys:String x:Key="Crash.Reason.NoAnalyzableFile">游戏出现了问题，但未找到可分析的相关日志文件。</sys:String>
+     <sys:String x:Key="Crash.Reason.OldForgeNewJavaIncompatible">旧版 Forge 与当前 Java 版本不兼容。</sys:String>
+     <sys:String x:Key="Crash.Reason.OpenGl1282">光影或资源包可能触发了 OpenGL 1282 错误。</sys:String>
++    <sys:String x:Key="Crash.Reason.OpenGlOutOfMemory">显卡显存不足（GL_OUT_OF_MEMORY）。</sys:String>
+     <sys:String x:Key="Crash.Reason.OptiFineForgeIncompatible">OptiFine 与当前 Forge 或 Minecraft 版本可能不兼容。</sys:String>
+     <sys:String x:Key="Crash.Reason.OptiFineWorldLoadCrash">当前 OptiFine 版本可能导致世界加载失败。</sys:String>
+     <sys:String x:Key="Crash.Reason.OutOfMemory">Minecraft 内存不足，无法继续运行。</sys:String>
+     <sys:String x:Key="Crash.Reason.ResourcePackTooLarge">资源包分辨率可能过高，或显卡性能不足。</sys:String>
++    <sys:String x:Key="Crash.Reason.ServerUnreachable">无法连接到游戏服务器（连接被拒绝）。</sys:String>
++    <sys:String x:Key="Crash.Reason.SessionInvalid">账号会话已失效，无法加入需要正版验证的服务器。</sys:String>
++    <sys:String x:Key="Crash.Reason.SessionLockFailed">存档可能正被其他进程占用（例如另一个游戏实例或杀毒软件），游戏无法获取存档锁。</sys:String>
+     <sys:String x:Key="Crash.Reason.ShadersModWithOptiFine">同时安装了 Shaders 模组与 OptiFine。</sys:String>
+     <sys:String x:Key="Crash.Reason.SpecificBlock.Multiple">世界中的某些方块可能导致了游戏出错。</sys:String>
+     <sys:String x:Key="Crash.Reason.SpecificBlock.Single">方块 {0} 可能导致了游戏出错。</sys:String>
+@@ -211,6 +225,7 @@
+     <sys:String x:Key="Crash.Reason.SpecificEntity.Single">实体 {0} 可能导致了游戏出错。</sys:String>
+     <sys:String x:Key="Crash.Reason.StackKeyword.Multiple">PCL CE 在错误堆栈中找到了可能相关的关键词：&#xA;{0}</sys:String>
+     <sys:String x:Key="Crash.Reason.StackKeyword.Single">PCL CE 在错误堆栈中找到了可能相关的关键词：{0}</sys:String>
++    <sys:String x:Key="Crash.Reason.StackOverflowError">游戏内发生了无限递归或循环调用（StackOverflowError），通常由模组或其配置导致。</sys:String>
+     <sys:String x:Key="Crash.Reason.SuspectedMod.Multiple">崩溃报告怀疑以下模组导致了游戏出错：&#xA;{0}</sys:String>
+     <sys:String x:Key="Crash.Reason.SuspectedMod.Single">崩溃报告怀疑模组 {0} 导致了游戏出错。</sys:String>
+     <sys:String x:Key="Crash.Reason.TooManyModsIdLimit">模组数量过多，超出了旧版 Minecraft 的 ID 限制。</sys:String>
+@@ -269,39 +284,54 @@
+ 
+     <!-- Crash.Suggestion -->
+ 
++    <sys:String x:Key="Crash.Suggestion.BrokenJavaInstallation">在 设置 → 启动选项 → 游戏 Java 中更换其他 Java，或重新安装当前 Java。</sys:String>
++    <sys:String x:Key="Crash.Suggestion.CorruptZipFile">根据日志定位损坏的文件并删除后重新下载；模组损坏时请重新下载对应模组。</sys:String>
++    <sys:String x:Key="Crash.Suggestion.DatapackLoadFailed">备份存档后，移除存档 datapacks 文件夹中不兼容的数据包。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.DisableTheseMods">尝试逐个禁用这些模组，再观察游戏是否仍会崩溃。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.DisableThisMod">尝试禁用该模组，再观察游戏是否仍会崩溃。</sys:String>
++    <sys:String x:Key="Crash.Suggestion.DiskSpaceInsufficient">清理游戏所在磁盘的空间后重试。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.DuplicateMods">每个模组只能安装一次。删除重复的模组后再启动游戏。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.ExportReport">需要帮助时，请发送错误报告文件，而不是此窗口的照片或截图。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.ExtractedModFile">删除 mods 文件夹中已被解压的模组文件夹，并放入完整的 .jar 模组文件后再试。</sys:String>
++    <sys:String x:Key="Crash.Suggestion.FileAccessDenied">将游戏文件夹加入杀毒软件白名单，关闭占用文件的程序后重试。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.FileOrContentValidationFailed">删除游戏及相关模组后重新下载。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.FollowLoaderInstructions">请根据上述原始错误信息或错误报告中的加载器提示进行处理。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.GraphicsDriver.Generic">尝试更新或回退显卡驱动；必要时改用更低版本的 Java。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.GraphicsDriver.IntelOrIntegrated">若设备有独立显卡，请使用独立显卡启动 PCL CE 与 Minecraft；也可以更新或回退显卡驱动。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.IncompleteForgeInstallation">在实例设置中重置或重新安装 Forge；不要在打包实例时删除 libraries 文件夹。</sys:String>
++    <sys:String x:Key="Crash.Suggestion.InvalidModFile">删除该模组文件并重新下载完整版本。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.InvalidModFileName">移除或重命名异常的模组文件，使文件名仅包含英文字母、数字、短横线、下划线和小数点。</sys:String>
++    <sys:String x:Key="Crash.Suggestion.InvalidPath">检查游戏路径与文件名中是否包含特殊字符，尽量避免在路径中使用中文或符号。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.JavaIncompatible">根据 Minecraft 版本和模组要求，在启动设置中选择合适的 Java。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.JavaTooNew">在启动设置中改用较低版本的 Java 后再试。</sys:String>
++    <sys:String x:Key="Crash.Suggestion.JvmArgumentError">检查实例设置中的 JVM 参数与内存分配是否正确，不确定时可清空自定义 JVM 参数。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.LauncherOutdated">当前使用的 PCL CE 版本较旧。更新 PCL CE 可能会解决此问题：设置 → 启动器 → 检查更新。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.MissingMixinBootstrap">检查 MixinBootstrap、模组加载器和相关前置是否已完整安装。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.ModConfigCrash">尝试删除该模组的配置文件后重新启动；必要时更新或禁用该模组。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.ModLoaderIncompatible">打开实例设置并调整或重新安装模组加载器版本。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.ModMixinFailed">逐步禁用模组，以定位与当前环境不兼容或存在问题的模组。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.ModRequiresJava11">在启动设置中改用 Java 11 或更高版本后再试。</sys:String>
++    <sys:String x:Key="Crash.Suggestion.ModSideMismatch">移除仅适用于服务端的模组（通常名称含 Server），或更换为适配当前环境的版本。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.MultipleForgeInInstanceJson">在实例设置中重置或重新安装 Forge，不要使用其他启动器修改 Forge 版本。</sys:String>
++    <sys:String x:Key="Crash.Suggestion.NativeAccessViolation">尝试更新显卡驱动；若频繁出现，请检查系统内存是否稳定。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.NightConfigBug">尝试删除相关模组配置文件，或安装 Night Config Fixes。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.OldForgeNewJavaIncompatible">尝试升级 Forge，或改用较低版本的 Java。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.OpenGl1282">关闭光影，并移除最近添加的资源包后再试。</sys:String>
++    <sys:String x:Key="Crash.Suggestion.OpenGlOutOfMemory">降低渲染距离、关闭光影，或使用更低分辨率的资源包。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.OptiFineForgeIncompatible">检查 OptiFine 与 Forge 的兼容版本，并重新安装匹配的版本。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.OptiFineWorldLoadCrash">尝试更换 OptiFine 版本，或暂时移除 OptiFine 后再进入世界。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.OutOfMemory">在启动设置中增加游戏分配内存，并移除配置要求较高的资源包、模组或光影。也可以在启动前关闭其他软件。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.ResourcePackTooLarge">移除高清资源包，或降低资源包分辨率；也可以更新显卡驱动。</sys:String>
++    <sys:String x:Key="Crash.Suggestion.ServerUnreachable">确认服务器地址是否正确，以及服务器是否正在运行。</sys:String>
++    <sys:String x:Key="Crash.Suggestion.SessionInvalid">在启动页重新登录账号后再试。</sys:String>
++    <sys:String x:Key="Crash.Suggestion.SessionLockFailed">关闭其他正在使用该存档的程序，检查杀毒软件是否锁定了存档文件夹，然后重试。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.ShadersModWithOptiFine">删除 Shaders Mod。OptiFine 已提供光影支持。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.SpecificBlock.Multiple">创建一个新世界测试游戏是否正常。若正常运行，问题可能来自原世界中的方块。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.SpecificBlock.Single">创建一个新世界测试游戏是否正常。若正常运行，可使用地图编辑器移除该方块，或禁用提供该方块的模组。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.SpecificEntity.Multiple">创建一个新世界并生成实体测试游戏是否正常。若正常运行，问题可能来自原世界中的实体。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.SpecificEntity.Single">创建一个新世界并生成该实体测试游戏是否正常。若正常运行，可使用地图编辑器移除该实体，或禁用提供它的模组。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.StackKeyword">检查这些关键词对应的模组或库；也可以导出错误报告以获取更多信息。</sys:String>
++    <sys:String x:Key="Crash.Suggestion.StackOverflowError">检查最近添加的模组并尝试逐个禁用；若怀疑是模组配置问题，可删除该模组的配置文件后重试。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.TooManyModsIdLimit">减少模组数量，或为旧版 Minecraft 安装能够扩展 ID 限制的修复模组。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.UsingJdk">在启动设置中改用常规 JRE 或其他适合该实例的 Java 后再试。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.UsingOpenJ9">在启动设置中改用 HotSpot Java 后再试。</sys:String>
+@@ -2283,6 +2313,7 @@
+ 
+     <sys:String x:Key="Minecraft.Launch.Java.AutoDownload.Action">自动下载</sys:String>
+     <sys:String x:Key="Minecraft.Launch.Java.AutoDownload.Message">PCL CE 未找到 {0}，是否需要自动下载？&#xA;如果已经安装了 {0}，可以在 设置 → 启动选项 → 游戏 Java 中手动导入。</sys:String>
++    <sys:String x:Key="Minecraft.Launch.Java.AutoDownload.SelectTitle">选择要下载的 Java 版本（推荐版本已预选）</sys:String>
+     <sys:String x:Key="Minecraft.Launch.Java.AutoDownload.Title">自动下载 Java？</sys:String>
+     <sys:String x:Key="Minecraft.Launch.Java.Compatibility.CheckFailed">检查 Java 兼容性失败。请查看错误详情。</sys:String>
+     <sys:String x:Key="Minecraft.Launch.Java.Compatibility.GlobalSelectedOutOfRange">全局指定的 Java（{0}）超出版本要求范围 [{1}, {2}]，可能导致游戏崩溃。</sys:String>
+@@ -3296,9 +3327,6 @@
+     <sys:String x:Key="Setup.Update.Error.NetworkFailed">无法获取最新版本信息，请检查网络连接</sys:String>
+     <sys:String x:Key="Setup.Update.Install">下载并安装</sys:String>
+     <sys:String x:Key="Setup.Update.Latest">已是最新版本</sys:String>
+-    <sys:String x:Key="Setup.Update.MirrorChyanCdk.Get">获取 CDK</sys:String>
+-    <sys:String x:Key="Setup.Update.MirrorChyanCdk.Label">Mirror 酱 CDK</sys:String>
+-    <sys:String x:Key="Setup.Update.MirrorChyanCdk.ToolTip">Mirror 酱 (mirrorchyan.com) 是一个付费的第三方应用分发平台，用于提供国内有偿高速下载源。&#xA;这是一项可选服务，不填入 CDK 不影响正常使用与更新。&#xA;如果你有 Mirror 酱的 CDK，可以提供给 PCL CE，启动器会优先使用他们的高速下载源下载软件更新，也能缓解社区公益更新服务器的一些压力……</sys:String>
+     <sys:String x:Key="Setup.Update.OtherOptions.Placeholder">AquaCL 3 是 PCL CE 的第一个主要更新，带来了让人眼前一亮的新设计，使用了最新开发技术，完全重构了基础体验，并更支持 macOS、Linux 等其他平台。</sys:String>
+     <sys:String x:Key="Setup.Update.OtherOptions.Title">其他更新选项 - 升级到 AquaCL</sys:String>
+     <sys:String x:Key="Setup.Update.RestartInstall">重启安装</sys:String>
+diff --git a/PCL.Core/App/Localization/Languages/zh-TW.xaml b/PCL.Core/App/Localization/Languages/zh-TW.xaml
+index d62dcb2..a6cff71 100644
+--- a/PCL.Core/App/Localization/Languages/zh-TW.xaml
++++ b/PCL.Core/App/Localization/Languages/zh-TW.xaml
+@@ -127,8 +127,12 @@
+ 
+     <!-- Crash.Reason -->
+ 
++    <sys:String x:Key="Crash.Reason.BrokenJavaInstallation">目前使用的 Java 執行環境可能已損壞或不完整。</sys:String>
+     <sys:String x:Key="Crash.Reason.ConfirmedMod.Multiple">以下模組導致了遊戲出錯：&#xA;{0}</sys:String>
+     <sys:String x:Key="Crash.Reason.ConfirmedMod.Single">模組 {0} 導致了遊戲出錯。</sys:String>
++    <sys:String x:Key="Crash.Reason.CorruptZipFile">某個壓縮檔（如模組、資源包或遊戲資源）已損壞。</sys:String>
++    <sys:String x:Key="Crash.Reason.DatapackLoadFailed">存檔中的資料包與目前遊戲版本不相容，世界無法載入。</sys:String>
++    <sys:String x:Key="Crash.Reason.DiskSpaceInsufficient">磁碟空間不足，遊戲無法寫入檔案。</sys:String>
+     <sys:String x:Key="Crash.Reason.DuplicateMods.Known">偵測到重複安裝的模組：&#xA;{0}</sys:String>
+     <sys:String x:Key="Crash.Reason.DuplicateMods.Unknown">可能安裝了重複的模組。</sys:String>
+     <sys:String x:Key="Crash.Reason.ExtractedModFile">偵測到已被解壓縮的模組檔案。</sys:String>
+@@ -136,6 +140,7 @@
+     <sys:String x:Key="Crash.Reason.FabricError.WithDetail">Fabric 提供了以下錯誤資訊：&#xA;{0}</sys:String>
+     <sys:String x:Key="Crash.Reason.FabricSolution.Generic">Fabric 可能已經提供了解決方案。</sys:String>
+     <sys:String x:Key="Crash.Reason.FabricSolution.WithDetail">Fabric 提供了以下解決方案：&#xA;{0}</sys:String>
++    <sys:String x:Key="Crash.Reason.FileAccessDenied">有檔案被其他程式佔用或拒絕存取，可能由防毒軟體引起。</sys:String>
+     <sys:String x:Key="Crash.Reason.FileOrContentValidationFailed">部分檔案或內容未能透過校驗。</sys:String>
+     <sys:String x:Key="Crash.Reason.ForgeError.Generic">Forge 可能已經提供了錯誤資訊。</sys:String>
+     <sys:String x:Key="Crash.Reason.ForgeError.WithDetail">Forge 提供了以下錯誤資訊：&#xA;{0}</sys:String>
+@@ -144,9 +149,12 @@
+     <sys:String x:Key="Crash.Reason.IncompatibleMods.Generic">可能與已安裝的模組不相容。</sys:String>
+     <sys:String x:Key="Crash.Reason.IncompatibleMods.WithDetail">與已安裝的模組不相容：&#xA;{0}</sys:String>
+     <sys:String x:Key="Crash.Reason.IncompleteForgeInstallation">Forge 安裝不完整，缺少必要檔案。</sys:String>
++    <sys:String x:Key="Crash.Reason.InvalidModFile">某個模組檔案不是有效的模組檔案（缺少 mods.toml 或已損壞）。</sys:String>
+     <sys:String x:Key="Crash.Reason.InvalidModFileName">某個模組檔名包含 Java 不支援的特殊字元。</sys:String>
++    <sys:String x:Key="Crash.Reason.InvalidPath">某個檔案路徑包含非法字元，或檔案編碼存在問題。</sys:String>
+     <sys:String x:Key="Crash.Reason.JavaIncompatible">目前 Java 版本與遊戲或模組不相容。</sys:String>
+     <sys:String x:Key="Crash.Reason.JavaTooNew">目前 Java 版本對該遊戲或載入器來說過高。</sys:String>
++    <sys:String x:Key="Crash.Reason.JvmArgumentError">Java 虛擬機器參數無效，遊戲無法啟動。</sys:String>
+     <sys:String x:Key="Crash.Reason.ManualDebugCrash">這是手動觸發的除錯崩潰，遊戲本身通常沒有問題。</sys:String>
+     <sys:String x:Key="Crash.Reason.MissingDependency.Generic">部分模組缺少前置，或與目前 Minecraft 版本不匹配。</sys:String>
+     <sys:String x:Key="Crash.Reason.MissingDependency.WithDetail">部分模組缺少前置，或與目前 Minecraft 版本不匹配：&#xA;{0}</sys:String>
+@@ -162,15 +170,21 @@
+     <sys:String x:Key="Crash.Reason.ModMixinFailed.None">部分模組的 Mixin 注入失敗。</sys:String>
+     <sys:String x:Key="Crash.Reason.ModMixinFailed.Single">模組 {0} 的 Mixin 注入失敗。</sys:String>
+     <sys:String x:Key="Crash.Reason.ModRequiresJava11">部分已安裝模組需要 Java 11 或更高版本。</sys:String>
++    <sys:String x:Key="Crash.Reason.ModSideMismatch">有模組在不相容的環境中載入了用戶端或伺服器端專用程式碼。</sys:String>
+     <sys:String x:Key="Crash.Reason.MultipleForgeInInstanceJson">實例 JSON 中包含多個 Forge 版本參數。</sys:String>
++    <sys:String x:Key="Crash.Reason.NativeAccessViolation">遊戲程序發生了原生崩潰（存取衝突），可能與顯示卡驅動或記憶體故障有關。</sys:String>
+     <sys:String x:Key="Crash.Reason.NightConfigBug">Night Config 讀取設定時發生錯誤。</sys:String>
+     <sys:String x:Key="Crash.Reason.NoAnalyzableFile">遊戲出現了問題，但未找到可分析的相關日誌檔案。</sys:String>
+     <sys:String x:Key="Crash.Reason.OldForgeNewJavaIncompatible">舊版 Forge 與目前 Java 版本不相容。</sys:String>
+     <sys:String x:Key="Crash.Reason.OpenGl1282">光影或資源包可能觸發了 OpenGL 1282 錯誤。</sys:String>
++    <sys:String x:Key="Crash.Reason.OpenGlOutOfMemory">顯示卡記憶體不足（GL_OUT_OF_MEMORY）。</sys:String>
+     <sys:String x:Key="Crash.Reason.OptiFineForgeIncompatible">OptiFine 與目前 Forge 或 Minecraft 版本可能不相容。</sys:String>
+     <sys:String x:Key="Crash.Reason.OptiFineWorldLoadCrash">目前 OptiFine 版本可能導致世界載入失敗。</sys:String>
+     <sys:String x:Key="Crash.Reason.OutOfMemory">Minecraft 記憶體不足，無法繼續執行。</sys:String>
+     <sys:String x:Key="Crash.Reason.ResourcePackTooLarge">資源包解析度可能過高，或顯示卡效能不足。</sys:String>
++    <sys:String x:Key="Crash.Reason.ServerUnreachable">無法連線到遊戲伺服器（連線被拒絕）。</sys:String>
++    <sys:String x:Key="Crash.Reason.SessionInvalid">帳號工作階段已失效，無法加入需要正版驗證的伺服器。</sys:String>
++    <sys:String x:Key="Crash.Reason.SessionLockFailed">存檔可能正被其他程式佔用（例如另一個遊戲實例或防毒軟體），遊戲無法取得存檔鎖。</sys:String>
+     <sys:String x:Key="Crash.Reason.ShadersModWithOptiFine">同時安裝了 Shaders 模組與 OptiFine。</sys:String>
+     <sys:String x:Key="Crash.Reason.SpecificBlock.Multiple">世界中的某些方塊可能導致了遊戲出錯。</sys:String>
+     <sys:String x:Key="Crash.Reason.SpecificBlock.Single">方塊 {0} 可能導致了遊戲出錯。</sys:String>
+@@ -178,6 +192,7 @@
+     <sys:String x:Key="Crash.Reason.SpecificEntity.Single">實體 {0} 可能導致了遊戲出錯。</sys:String>
+     <sys:String x:Key="Crash.Reason.StackKeyword.Multiple">PCL CE 在錯誤堆疊中找到了可能相關的關鍵字：&#xA;{0}</sys:String>
+     <sys:String x:Key="Crash.Reason.StackKeyword.Single">PCL CE 在錯誤堆疊中找到了可能相關的關鍵字：{0}</sys:String>
++    <sys:String x:Key="Crash.Reason.StackOverflowError">遊戲內發生了無限遞迴或循環呼叫（StackOverflowError），通常由模組或其設定導致。</sys:String>
+     <sys:String x:Key="Crash.Reason.SuspectedMod.Multiple">當機報告懷疑以下模組導致了遊戲出錯：&#xA;{0}</sys:String>
+     <sys:String x:Key="Crash.Reason.SuspectedMod.Single">當機報告懷疑模組 {0} 導致了遊戲出錯。</sys:String>
+     <sys:String x:Key="Crash.Reason.TooManyModsIdLimit">模組數量過多，超出了舊版 Minecraft 的 ID 限制。</sys:String>
+@@ -227,39 +242,54 @@
+ 
+     <!-- Crash.Suggestion -->
+ 
++    <sys:String x:Key="Crash.Suggestion.BrokenJavaInstallation">在 設定 → 啟動選項 → 遊戲 Java 中更換其他 Java，或重新安裝目前 Java。</sys:String>
++    <sys:String x:Key="Crash.Suggestion.CorruptZipFile">根據日誌找出損壞的檔案並刪除後重新下載；模組損壞時請重新下載對應模組。</sys:String>
++    <sys:String x:Key="Crash.Suggestion.DatapackLoadFailed">備份存檔後，移除存檔 datapacks 資料夾中不相容的資料包。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.DisableTheseMods">嘗試逐個停用這些模組，再觀察遊戲是否仍會崩潰。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.DisableThisMod">嘗試停用該模組，再觀察遊戲是否仍會崩潰。</sys:String>
++    <sys:String x:Key="Crash.Suggestion.DiskSpaceInsufficient">清理遊戲所在磁碟的空間後重試。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.DuplicateMods">每個模組只能安裝一次。刪除重複的模組後再啟動遊戲。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.ExportReport">需要幫助時，請傳送錯誤報告檔案，而不是此視窗的照片或截圖。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.ExtractedModFile">刪除 mods 資料夾中已被解壓縮的模組資料夾，並放入完整的 .jar 模組檔案後再試。</sys:String>
++    <sys:String x:Key="Crash.Suggestion.FileAccessDenied">將遊戲資料夾加入防毒軟體白名單，關閉佔用檔案的程式後重試。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.FileOrContentValidationFailed">刪除遊戲及相關模組後重新下載。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.FollowLoaderInstructions">請根據上述原始錯誤資訊或錯誤報告中的載入器提示進行處理。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.GraphicsDriver.Generic">嘗試更新或回退顯示卡驅動；必要時改用更低版本的 Java。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.GraphicsDriver.IntelOrIntegrated">若裝置有獨立顯示卡，請使用獨立顯示卡啟動 PCL CE 與 Minecraft；也可以更新或回退顯示卡驅動。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.IncompleteForgeInstallation">在實例設定中重設或重新安裝 Forge；不要在打包實例時刪除 libraries 資料夾。</sys:String>
++    <sys:String x:Key="Crash.Suggestion.InvalidModFile">刪除該模組檔案並重新下載完整版本。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.InvalidModFileName">移除或重新命名異常的模組檔案，使檔名僅包含英文字母、數字、短橫線、下劃線和小數點。</sys:String>
++    <sys:String x:Key="Crash.Suggestion.InvalidPath">檢查遊戲路徑與檔案名稱中是否包含特殊字元，盡量避免在路徑中使用中文或符號。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.JavaIncompatible">根據 Minecraft 版本和模組要求，在啟動設定中選擇合適的 Java。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.JavaTooNew">在啟動設定中改用較低版本的 Java 後再試。</sys:String>
++    <sys:String x:Key="Crash.Suggestion.JvmArgumentError">檢查實例設定中的 JVM 參數與記憶體分配是否正確，不確定時可清空自訂 JVM 參數。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.LauncherOutdated">目前使用的 PCL CE 版本較舊。更新 PCL CE 可能會解決此問題：設定 → 啟動器 → 檢查更新。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.MissingMixinBootstrap">檢查 MixinBootstrap、模組載入器和相關前置是否已完整安裝。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.ModConfigCrash">嘗試刪除該模組的設定檔後重新啟動；必要時更新或停用該模組。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.ModLoaderIncompatible">開啟實例設定並調整或重新安裝模組載入器版本。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.ModMixinFailed">逐步停用模組，以定位與目前環境不相容或存在問題的模組。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.ModRequiresJava11">在啟動設定中改用 Java 11 或更高版本後再試。</sys:String>
++    <sys:String x:Key="Crash.Suggestion.ModSideMismatch">移除僅適用於伺服器端的模組（通常名稱含 Server），或更換為適配目前環境的版本。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.MultipleForgeInInstanceJson">在實例設定中重設或重新安裝 Forge，不要使用其他啟動器修改 Forge 版本。</sys:String>
++    <sys:String x:Key="Crash.Suggestion.NativeAccessViolation">嘗試更新顯示卡驅動；若頻繁出現，請檢查系統記憶體是否穩定。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.NightConfigBug">嘗試刪除相關模組設定檔，或安裝 Night Config Fixes。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.OldForgeNewJavaIncompatible">嘗試升級 Forge，或改用較低版本的 Java。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.OpenGl1282">關閉光影，並移除最近新增的資源包後再試。</sys:String>
++    <sys:String x:Key="Crash.Suggestion.OpenGlOutOfMemory">降低渲染距離、關閉光影，或使用更低解析度的資源包。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.OptiFineForgeIncompatible">檢查 OptiFine 與 Forge 相容的版本，並重新安裝匹配的版本。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.OptiFineWorldLoadCrash">嘗試更換 OptiFine 版本，或暫時移除 OptiFine 後再進入世界。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.OutOfMemory">在啟動設定中增加遊戲分配記憶體，並移除設定要求較高的資源包、模組或光影。也可以在啟動前關閉其他軟體。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.ResourcePackTooLarge">移除高畫質資源包，或降低資源包解析度；也可以更新顯示卡驅動。</sys:String>
++    <sys:String x:Key="Crash.Suggestion.ServerUnreachable">確認伺服器位址是否正確，以及伺服器是否正在執行。</sys:String>
++    <sys:String x:Key="Crash.Suggestion.SessionInvalid">在啟動頁重新登入帳號後再試。</sys:String>
++    <sys:String x:Key="Crash.Suggestion.SessionLockFailed">關閉其他正在使用該存檔的程式，檢查防毒軟體是否鎖定了存檔資料夾，然後重試。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.ShadersModWithOptiFine">刪除 Shaders Mod。OptiFine 已提供光影支援。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.SpecificBlock.Multiple">建立一個新世界測試遊戲是否正常。若正常執行，問題可能來自原世界中的方塊。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.SpecificBlock.Single">建立一個新世界測試遊戲是否正常。若正常執行，可使用地圖編輯器移除該方塊，或停用提供該方塊的模組。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.SpecificEntity.Multiple">建立一個新世界並生成實體測試遊戲是否正常。若正常執行，問題可能來自原世界中的實體。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.SpecificEntity.Single">建立一個新世界並生成該實體測試遊戲是否正常。若正常執行，可使用地圖編輯器移除該實體，或停用提供它的模組。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.StackKeyword">檢查這些關鍵字對應的模組或庫；也可以匯出錯誤報告以取得更多資訊。</sys:String>
++    <sys:String x:Key="Crash.Suggestion.StackOverflowError">檢查最近加入的模組並嘗試逐個停用；若懷疑是模組設定問題，可刪除該模組的設定檔後重試。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.TooManyModsIdLimit">減少模組數量，或為舊版 Minecraft 安裝能夠擴充套件 ID 限制的修復模組。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.UsingJdk">在啟動設定中改用一般 JRE 或其他適合該實例的 Java 後再試。</sys:String>
+     <sys:String x:Key="Crash.Suggestion.UsingOpenJ9">在啟動設定中改用 HotSpot Java 後再試。</sys:String>
+@@ -2191,6 +2221,7 @@
+ 
+     <sys:String x:Key="Minecraft.Launch.Java.AutoDownload.Action">自動下載</sys:String>
+     <sys:String x:Key="Minecraft.Launch.Java.AutoDownload.Message">PCL CE 未找到 {0}，是否需要自動下載？&#xA;如果已經安裝了 {0}，可以在 設定 → 啟動選項 → 遊戲 Java 中手動匯入。</sys:String>
++    <sys:String x:Key="Minecraft.Launch.Java.AutoDownload.SelectTitle">選擇要下載的 Java 版本（推薦版本已預選）</sys:String>
+     <sys:String x:Key="Minecraft.Launch.Java.AutoDownload.Title">自動下載 Java？</sys:String>
+     <sys:String x:Key="Minecraft.Launch.Java.Compatibility.CheckFailed">檢查 Java 相容性失敗。請檢視錯誤詳情。</sys:String>
+     <sys:String x:Key="Minecraft.Launch.Java.Compatibility.GlobalSelectedOutOfRange">全域指定的 Java（{0}）超出版本要求範圍 [{1}, {2}]，可能導致遊戲崩潰。</sys:String>
+@@ -3189,9 +3220,6 @@
+     <sys:String x:Key="Setup.Update.Error.NetworkFailed">無法取得最新版本資訊，請檢查網路連線</sys:String>
+     <sys:String x:Key="Setup.Update.Install">下載並安裝</sys:String>
+     <sys:String x:Key="Setup.Update.Latest">已是最新版本</sys:String>
+-    <sys:String x:Key="Setup.Update.MirrorChyanCdk.Get">取得 CDK</sys:String>
+-    <sys:String x:Key="Setup.Update.MirrorChyanCdk.Label">Mirror 醬 CDK</sys:String>
+-    <sys:String x:Key="Setup.Update.MirrorChyanCdk.ToolTip">Mirror 醬 (mirrorchyan.com) 是一個付費的第三方應用分發平台，用於提供有償高速下載源。&#xA;這是一項可選服務，不填入 CDK 不影響正常使用與更新。&#xA;如果你有 Mirror 醬的 CDK，可以提供給 PCL CE，啟動器會優先使用他們的高速下載源下載軟體更新，也能紓解社群公益更新伺服器的一些壓力……</sys:String>
+     <sys:String x:Key="Setup.Update.OtherOptions.Placeholder">AquaCL 3 是 PCL CE 的第一個主要更新，帶來了讓人眼睛一亮的新設計，使用了最新開發技術，完全重構了基礎體驗，並更支援 macOS、Linux 等其他平台。</sys:String>
+     <sys:String x:Key="Setup.Update.OtherOptions.Title">其他更新選項 - 升級到 AquaCL</sys:String>
+     <sys:String x:Key="Setup.Update.RestartInstall">重啟安裝</sys:String>
+diff --git a/PCL.Core/Link/Lobby/LobbyService.cs b/PCL.Core/Link/Lobby/LobbyService.cs
+index 0748e34..0a83a66 100644
+--- a/PCL.Core/Link/Lobby/LobbyService.cs
++++ b/PCL.Core/Link/Lobby/LobbyService.cs
+@@ -24,7 +24,7 @@ namespace PCL.Core.Link.Lobby;
+ /// <summary>
+ /// Lobby server. For auto-management
+ /// </summary>
+-[LifecycleService(LifecycleState.Loaded)]
++// [Local Patch] 已关闭内置联机功能：移除 LifecycleService 注册，服务不再随应用自动启动
+ public class LobbyService() : GeneralService("lobby", "LobbyService")
+ {
+     private static readonly LobbyController _LobbyController = new();
+diff --git a/PCL.Core/PCL.Core.csproj b/PCL.Core/PCL.Core.csproj
+index f823a13..5fe00fa 100644
+--- a/PCL.Core/PCL.Core.csproj
++++ b/PCL.Core/PCL.Core.csproj
+@@ -50,16 +50,13 @@
+         <PackageReference Include="Microsoft.Xaml.Behaviors.Wpf" Version="1.1.142" />
+         <PackageReference Include="Wacton.Unicolour" Version="8.0.0" />
+         <!-- 语言和系统特性 -->
+-        <PackageReference Include="Microsoft.CSharp" Version="4.7.0" />
+         <PackageReference Include="System.Management" Version="10.0.9" />
+-        <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.9" />
+         <PackageReference Include="PlainToolkit.CngProtectedData" Version="2.1.0" />
+         <!-- 归档文件 -->
+         <PackageReference Include="SharpZipLib" Version="1.4.2" />
+         <!-- 配置文件和数据库 -->
+         <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.9" />
+         <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.3" />
+-        <PackageReference Include="System.Text.Json" Version="10.0.9" />
+         <PackageReference Include="YamlDotNet" Version="18.1.0" />
+         <PackageReference Include="fNbt" Version="1.0.0" />
+         <PackageReference Include="LiteDB" Version="5.0.21" />
+diff --git a/Plain Craft Launcher 2/Modules/Base/ModBase.cs b/Plain Craft Launcher 2/Modules/Base/ModBase.cs
+index ea36304..799155c 100644
+--- a/Plain Craft Launcher 2/Modules/Base/ModBase.cs	
++++ b/Plain Craft Launcher 2/Modules/Base/ModBase.cs	
+@@ -1403,7 +1403,8 @@ public static class ModBase
+                     if (progressIncrementHandler is not null)
+                         progressIncrementHandler(1d / totalCount);
+                     var destinationPath = Path.GetFullPath(Path.Combine(destDirectory, entry.FullName));
+-                    if (!destinationPath.StartsWithF(destDirectory))
++                    // [Local Patch] 改用严格目录包含校验，避免前缀比较误放行兄弟目录（如 C:\a 与 C:\ab）
++                    if (!Files.IsPathWithinDirectory(destinationPath, destDirectory))
+                         throw new Exception(
+                             $"解压文件 {entry.FullName} 错误：解压文件路径 {destinationPath} 不在目标目录 {destDirectory} 内");
+                     if (destinationPath.EndsWithF(@"\") || destinationPath.EndsWithF("/"))
+diff --git a/Plain Craft Launcher 2/Modules/Minecraft/CrashAnalysis/CrashCause.cs b/Plain Craft Launcher 2/Modules/Minecraft/CrashAnalysis/CrashCause.cs
+index 597ae50..87b967b 100644
+--- a/Plain Craft Launcher 2/Modules/Minecraft/CrashAnalysis/CrashCause.cs	
++++ b/Plain Craft Launcher 2/Modules/Minecraft/CrashAnalysis/CrashCause.cs	
+@@ -49,5 +49,20 @@ internal enum CrashCause
+     ShadersModWithOptiFine,
+     IncompleteForgeInstallation,
+     ModRequiresJava11,
+-    MissingDependencyOrWrongMcVersion
++    MissingDependencyOrWrongMcVersion,
++    StackOverflowError,
++    CorruptZipFile,
++    SessionLockFailed,
++    DiskSpaceInsufficient,
++    FileAccessDenied,
++    InvalidPath,
++    JvmArgumentError,
++    BrokenJavaInstallation,
++    SessionInvalid,
++    ServerUnreachable,
++    DatapackLoadFailed,
++    ModSideMismatch,
++    InvalidModFile,
++    OpenGlOutOfMemory,
++    NativeAccessViolation
+ }
+\ No newline at end of file
+diff --git a/Plain Craft Launcher 2/Modules/Minecraft/CrashAnalysis/Detection/CrashEvidenceExtractor.cs b/Plain Craft Launcher 2/Modules/Minecraft/CrashAnalysis/Detection/CrashEvidenceExtractor.cs
+index fc1ebee..6d04f9e 100644
+--- a/Plain Craft Launcher 2/Modules/Minecraft/CrashAnalysis/Detection/CrashEvidenceExtractor.cs	
++++ b/Plain Craft Launcher 2/Modules/Minecraft/CrashAnalysis/Detection/CrashEvidenceExtractor.cs	
+@@ -149,14 +149,35 @@ internal sealed class CrashEvidenceExtractor
+             !hsLog.Contains("EXCEPTION_ACCESS_VIOLATION", StringComparison.Ordinal))
+             yield break;
+ 
++        var isDriverRelated = false;
++
+         if (hsLog.Contains("# C  [ig", StringComparison.Ordinal))
++        {
++            isDriverRelated = true;
+             yield return _DriverFinding(CrashCause.IntelDriverAccessViolation, "# C  [ig");
++        }
+ 
+         if (hsLog.Contains("# C  [atio", StringComparison.Ordinal))
++        {
++            isDriverRelated = true;
+             yield return _DriverFinding(CrashCause.AmdDriverAccessViolation, "# C  [atio");
++        }
+ 
+         if (hsLog.Contains("# C  [nvoglv", StringComparison.Ordinal))
++        {
++            isDriverRelated = true;
+             yield return _DriverFinding(CrashCause.NvidiaDriverAccessViolation, "# C  [nvoglv");
++        }
++
++        // 未匹配到已知显卡驱动签名时，保留通用原生崩溃结论，避免完全漏诊
++        if (!isDriverRelated)
++            yield return new CrashFinding(
++                CrashCause.NativeAccessViolation,
++                CrashConfidence.Medium,
++                [_Evidence("EXCEPTION_ACCESS_VIOLATION", CrashLogKind.HsErr, "native-crash")])
++            {
++                ShouldStop = true
++            };
+     }
+ 
+     private static CrashFinding _DriverFinding(
+diff --git a/Plain Craft Launcher 2/Modules/Minecraft/CrashAnalysis/Detection/CrashRuleCatalog.cs b/Plain Craft Launcher 2/Modules/Minecraft/CrashAnalysis/Detection/CrashRuleCatalog.cs
+index a1ed4b2..032b996 100644
+--- a/Plain Craft Launcher 2/Modules/Minecraft/CrashAnalysis/Detection/CrashRuleCatalog.cs	
++++ b/Plain Craft Launcher 2/Modules/Minecraft/CrashAnalysis/Detection/CrashRuleCatalog.cs	
+@@ -162,7 +162,159 @@ internal static class CrashRuleCatalog
+             DetectionPhase.Fatal,
+             CrashLogKind.CrashReport,
+             "Manually triggered debug crash",
+-            CrashCause.ManualDebugCrash)
++            CrashCause.ManualDebugCrash),
++
++        // ===== 扩展规则库：Java 环境与 JVM 参数 =====
++        _Contains(
++            DetectionPhase.Fatal,
++            CrashLogKind.Game,
++            "Unrecognized VM option",
++            CrashCause.JvmArgumentError),
++        _Contains(
++            DetectionPhase.Fatal,
++            CrashLogKind.Game,
++            "Invalid initial heap size",
++            CrashCause.JvmArgumentError),
++        _Contains(
++            DetectionPhase.Fatal,
++            CrashLogKind.Game,
++            "Error: Could not create the Java Virtual Machine",
++            CrashCause.JvmArgumentError),
++        _ContainsAll(
++            DetectionPhase.Fatal,
++            CrashLogKind.Game,
++            ["Error: could not open", "jvm.cfg"],
++            CrashCause.BrokenJavaInstallation),
++        _ContainsAll(
++            DetectionPhase.Fatal,
++            CrashLogKind.Game,
++            ["Error: could not open", "jvm.dll"],
++            CrashCause.BrokenJavaInstallation),
++        _Contains(
++            DetectionPhase.Fatal,
++            CrashLogKind.Game,
++            "Error occurred during initialization of VM",
++            CrashCause.BrokenJavaInstallation,
++            stopOnMatch: false),
++
++        // ===== 扩展规则库：崩溃堆栈形态 =====
++        _Contains(
++            DetectionPhase.Fatal,
++            CrashLogKind.Game,
++            "java.lang.StackOverflowError",
++            CrashCause.StackOverflowError),
++        _Contains(
++            DetectionPhase.Fatal,
++            CrashLogKind.CrashReport,
++            "java.lang.StackOverflowError",
++            CrashCause.StackOverflowError),
++        _Contains(
++            DetectionPhase.Fatal,
++            CrashLogKind.HsErr,
++            "EXCEPTION_STACK_OVERFLOW",
++            CrashCause.StackOverflowError),
++
++        // ===== 扩展规则库：文件系统 =====
++        _ContainsAny(
++            DetectionPhase.Fatal,
++            CrashLogKind.Game,
++            [
++                "zip END header not found",
++                "java.util.zip.ZipException"
++            ],
++            CrashCause.CorruptZipFile),
++        _ContainsAny(
++            DetectionPhase.Fatal,
++            CrashLogKind.CrashReport,
++            [
++                "zip END header not found",
++                "java.util.zip.ZipException"
++            ],
++            CrashCause.CorruptZipFile),
++        _ContainsAny(
++            DetectionPhase.Fatal,
++            CrashLogKind.Game,
++            [
++                "No space left on device",
++                "There is not enough space on the disk",
++                "磁盘空间不足"
++            ],
++            CrashCause.DiskSpaceInsufficient),
++        _ContainsAny(
++            DetectionPhase.Fatal,
++            CrashLogKind.Game,
++            [
++                "Access is denied",
++                "AccessDeniedException",
++                "另一个程序正在使用此文件",
++                "The process cannot access the file"
++            ],
++            CrashCause.FileAccessDenied),
++        _ContainsAny(
++            DetectionPhase.Fatal,
++            CrashLogKind.Game,
++            [
++                "java.nio.file.InvalidPathException",
++                "java.nio.charset.MalformedInputException"
++            ],
++            CrashCause.InvalidPath),
++        _Contains(
++            DetectionPhase.Fatal,
++            CrashLogKind.Game,
++            "Failed to check session lock",
++            CrashCause.SessionLockFailed),
++
++        // ===== 扩展规则库：存档与数据包 =====
++        _Contains(
++            DetectionPhase.Fatal,
++            CrashLogKind.Game,
++            "Errors in currently selected datapacks prevented the world from loading",
++            CrashCause.DatapackLoadFailed),
++
++        // ===== 扩展规则库：联机与登录 =====
++        _ContainsAny(
++            DetectionPhase.Fatal,
++            CrashLogKind.Game,
++            [
++                "Invalid session (Try resetting your token)",
++                "Failed to verify authentication"
++            ],
++            CrashCause.SessionInvalid),
++        _ContainsAny(
++            DetectionPhase.Fatal,
++            CrashLogKind.Game,
++            [
++                "Connection refused: no further information",
++                "AnnotatedConnectException"
++            ],
++            CrashCause.ServerUnreachable),
++
++        // ===== 扩展规则库：加载器与模组文件 =====
++        _Contains(
++            DetectionPhase.Fatal,
++            CrashLogKind.Game,
++            "for invalid dist DEDICATED_SERVER",
++            CrashCause.ModSideMismatch),
++        _ContainsAny(
++            DetectionPhase.Fatal,
++            CrashLogKind.Game,
++            [
++                "is missing mods.toml file",
++                "is not a valid mod file"
++            ],
++            CrashCause.InvalidModFile),
++
++        // ===== 扩展规则库：显卡显存 =====
++        _Contains(
++            DetectionPhase.Fatal,
++            CrashLogKind.Game,
++            "GL_OUT_OF_MEMORY",
++            CrashCause.OpenGlOutOfMemory),
++        _Contains(
++            DetectionPhase.Fatal,
++            CrashLogKind.CrashReport,
++            "GL_OUT_OF_MEMORY",
++            CrashCause.OpenGlOutOfMemory)
+     ];
+ 
+     private static CrashRule _Contains(
+diff --git a/Plain Craft Launcher 2/Modules/Minecraft/CrashAnalysis/Presentation/CrashResultFormatter.cs b/Plain Craft Launcher 2/Modules/Minecraft/CrashAnalysis/Presentation/CrashResultFormatter.cs
+index 5ce4207..0a45b55 100644
+--- a/Plain Craft Launcher 2/Modules/Minecraft/CrashAnalysis/Presentation/CrashResultFormatter.cs	
++++ b/Plain Craft Launcher 2/Modules/Minecraft/CrashAnalysis/Presentation/CrashResultFormatter.cs	
+@@ -409,6 +409,89 @@ internal sealed class CrashResultFormatter
+                     "Crash.Suggestion.ExportReport",
+                     help: true);
+ 
++            case CrashCause.StackOverflowError:
++                return _Spec(
++                    "Crash.Reason.StackOverflowError",
++                    "Crash.Suggestion.StackOverflowError",
++                    help: true);
++
++            case CrashCause.CorruptZipFile:
++                return _Spec(
++                    "Crash.Reason.CorruptZipFile",
++                    "Crash.Suggestion.CorruptZipFile",
++                    help: true);
++
++            case CrashCause.SessionLockFailed:
++                return _Spec(
++                    "Crash.Reason.SessionLockFailed",
++                    "Crash.Suggestion.SessionLockFailed",
++                    help: true);
++
++            case CrashCause.DiskSpaceInsufficient:
++                return _Spec(
++                    "Crash.Reason.DiskSpaceInsufficient",
++                    "Crash.Suggestion.DiskSpaceInsufficient");
++
++            case CrashCause.FileAccessDenied:
++                return _Spec(
++                    "Crash.Reason.FileAccessDenied",
++                    "Crash.Suggestion.FileAccessDenied",
++                    help: true);
++
++            case CrashCause.InvalidPath:
++                return _Spec(
++                    "Crash.Reason.InvalidPath",
++                    "Crash.Suggestion.InvalidPath");
++
++            case CrashCause.JvmArgumentError:
++                return _Spec(
++                    "Crash.Reason.JvmArgumentError",
++                    "Crash.Suggestion.JvmArgumentError",
++                    action: CrashSuggestedAction.OpenInstanceSettings);
++
++            case CrashCause.BrokenJavaInstallation:
++                return _Spec(
++                    "Crash.Reason.BrokenJavaInstallation",
++                    "Crash.Suggestion.BrokenJavaInstallation");
++
++            case CrashCause.SessionInvalid:
++                return _Spec(
++                    "Crash.Reason.SessionInvalid",
++                    "Crash.Suggestion.SessionInvalid");
++
++            case CrashCause.ServerUnreachable:
++                return _Spec(
++                    "Crash.Reason.ServerUnreachable",
++                    "Crash.Suggestion.ServerUnreachable");
++
++            case CrashCause.DatapackLoadFailed:
++                return _Spec(
++                    "Crash.Reason.DatapackLoadFailed",
++                    "Crash.Suggestion.DatapackLoadFailed",
++                    help: true);
++
++            case CrashCause.ModSideMismatch:
++                return _Spec(
++                    "Crash.Reason.ModSideMismatch",
++                    "Crash.Suggestion.ModSideMismatch");
++
++            case CrashCause.InvalidModFile:
++                return _Spec(
++                    "Crash.Reason.InvalidModFile",
++                    "Crash.Suggestion.InvalidModFile");
++
++            case CrashCause.OpenGlOutOfMemory:
++                return _Spec(
++                    "Crash.Reason.OpenGlOutOfMemory",
++                    "Crash.Suggestion.OpenGlOutOfMemory",
++                    help: true);
++
++            case CrashCause.NativeAccessViolation:
++                return _Spec(
++                    "Crash.Reason.NativeAccessViolation",
++                    "Crash.Suggestion.NativeAccessViolation",
++                    help: true);
++
+             default:
+                 return _Spec(
+                     "Crash.Reason.UnknownFinding",
+diff --git a/Plain Craft Launcher 2/Modules/Minecraft/ModJava.cs b/Plain Craft Launcher 2/Modules/Minecraft/ModJava.cs
+index b2dae78..44b7f94 100644
+--- a/Plain Craft Launcher 2/Modules/Minecraft/ModJava.cs	
++++ b/Plain Craft Launcher 2/Modules/Minecraft/ModJava.cs	
+@@ -359,22 +359,140 @@ public static class ModJava
+     #region 下载
+ 
+     /// <summary>
+-    ///     提示 Java 缺失，并弹窗确认是否自动下载。返回玩家选择是否下载。
++    ///     提示 Java 缺失，并弹窗确认是否自动下载。
++    ///     返回 null 表示不下载；返回空字符串表示下载推荐版本；返回组件名表示下载玩家选择的版本。
+     /// </summary>
+-    public static bool JavaDownloadConfirm(string versionDescription, bool forcedManualDownload = false)
++    public static string? JavaDownloadConfirm(string versionDescription, string? preferredMajor = null,
++        bool forcedManualDownload = false)
+     {
+-        if (!forcedManualDownload)
+-            return ModMain.MyMsgBox(
++        if (forcedManualDownload)
++        {
++            ModMain.MyMsgBox(
++                Lang.Text("Minecraft.Launch.Java.NotFound.Manual.Message", versionDescription),
++                Lang.Text("Minecraft.Launch.Java.NotFound.Title"));
++            return null;
++        }
++
++        if (ModMain.MyMsgBox(
+                 Lang.Text("Minecraft.Launch.Java.AutoDownload.Message", versionDescription),
+                 Lang.Text("Minecraft.Launch.Java.AutoDownload.Title"),
+                 Lang.Text("Minecraft.Launch.Java.AutoDownload.Action"),
+-                Lang.Text("Common.Action.Cancel")) == 1;
++                Lang.Text("Common.Action.Cancel")) != 1)
++            return null;
++
++        // 弹出可下载的 Java 版本列表，玩家可自由选择；列表获取失败或未选择时使用推荐版本
++        var options = _GetJavaDownloadOptions();
++        if (options.Count == 0)
++            return "";
++
++        options = options.OrderBy(o => o.Major).ThenBy(o => o.Component).ToList();
++        var preferred = options.FirstOrDefault(o => preferredMajor is not null && o.Major.ToString() == preferredMajor)
++                        ?? options.FirstOrDefault(o => o.Major > 0)
++                        ?? options[0];
++        var radios = options
++            .Select(o => new MyListItem
++            {
++                Title = o.Major > 0
++                    ? $"Java {o.Major}（{o.VersionName}，{o.Component}）"
++                    : $"{o.VersionName}（{o.Component}）",
++                Type = MyListItem.CheckType.RadioBox,
++                Checked = o == preferred
++            })
++            .Cast<IMyRadio>()
++            .ToList();
++
++        var selected = ModMain.MyMsgBoxSelect(
++            radios,
++            Lang.Text("Minecraft.Launch.Java.AutoDownload.SelectTitle"),
++            Lang.Text("Minecraft.Launch.Java.AutoDownload.Action"),
++            Lang.Text("Common.Action.Cancel"));
++
++        if (selected is null || selected < 0 || selected >= options.Count)
++            return ""; // 未选择时使用预选中的推荐版本
++
++        var chosen = options[selected.Value];
++        ModBase.Log($"[Java] 玩家选择下载：{chosen.Component}（{chosen.VersionName}）");
++        return chosen.Component;
++    }
+ 
+-        ModMain.MyMsgBox(
+-            Lang.Text("Minecraft.Launch.Java.NotFound.Manual.Message", versionDescription),
+-            Lang.Text("Minecraft.Launch.Java.NotFound.Title"));
++    private sealed record JavaDownloadOption(string Component, string VersionName, int Major);
+ 
+-        return false;
++    /// <summary>
++    ///     获取 Mojang 运行时索引中所有可供下载的 Java 组件；获取失败时返回空列表。
++    /// </summary>
++    private static List<JavaDownloadOption> _GetJavaDownloadOptions()
++    {
++        try
++        {
++            ModBase.Log("[Java] 获取可下载的 Java 版本列表");
++            var components = _GetJavaRuntimeIndex();
++            var options = new List<JavaDownloadOption>();
++            foreach (var pair in components)
++            {
++                var versionName = pair.Value?.AsArray().FirstOrDefault()?["version"]?["name"]?.ToString();
++                if (string.IsNullOrEmpty(versionName))
++                    continue;
++                options.Add(new JavaDownloadOption(pair.Key, versionName, _GetComponentMajor(pair.Key, versionName)));
++            }
++
++            ModBase.Log($"[Java] 共找到 {options.Count} 个可下载的 Java 版本");
++            return options;
++        }
++        catch (Exception ex)
++        {
++            ModBase.Log(ex, "[Java] 获取 Java 版本列表失败，将使用推荐版本");
++            return [];
++        }
++    }
++
++    /// <summary>
++    ///     获取 Mojang Java 运行时索引中当前系统架构对应的组件列表。
++    /// </summary>
++    private static JsonObject _GetJavaRuntimeIndex()
++    {
++        var indexFileStr = ModNet.NetGetCodeByLoader(
++            ModDownload.DlVersionListOrder(
++                new[]
++                {
++                    "https://piston-meta.mojang.com/v1/products/java-runtime/2ec0cc96c44e5a76b9c8b7c39df7210883d12871/all.json"
++                },
++                new[]
++                {
++                    "https://bmclapi2.bangbang93.com/v1/products/java-runtime/2ec0cc96c44e5a76b9c8b7c39df7210883d12871/all.json"
++                }), isJson: true);
++        return (JsonObject)((JsonObject)ModBase.GetJson(indexFileStr)[$"windows-x{(SystemInfo.Is32BitSystem ? "86" : "64")}"]);
++    }
++
++    /// <summary>
++    ///     从版本名或组件名推断 Java 主版本，无法识别时返回 0。
++    /// </summary>
++    private static int _GetComponentMajor(string component, string versionName)
++    {
++        var digits = new string(versionName.TakeWhile(char.IsDigit).ToArray());
++        if (int.TryParse(digits, out var major))
++        {
++            if (major == 1)
++            {
++                // 兼容 "1.8.0_402" 形式的版本号
++                var parts = versionName.Split('.');
++                if (parts.Length > 1)
++                {
++                    var second = new string(parts[1].TakeWhile(char.IsDigit).ToArray());
++                    if (int.TryParse(second, out major))
++                        return major;
++                }
++            }
++
++            return major;
++        }
++
++        return component switch
++        {
++            "java-runtime-delta" => 17,
++            "java-runtime-omega" => 21,
++            "java-runtime-alpha" or "java-runtime-beta" or "java-runtime-gamma" => 8,
++            _ => 0
++        };
+     }
+ 
+     /// <summary>
+@@ -435,21 +553,10 @@ public static class ModJava
+     private static void JavaFileList(ModLoader.LoaderTask<string, List<DownloadFile>> loader)
+     {
+         ModBase.Log("[Java] 开始获取 Java 下载信息");
+-        var indexFileStr = ModNet.NetGetCodeByLoader(
+-            ModDownload.DlVersionListOrder(
+-                new[]
+-                {
+-                    "https://piston-meta.mojang.com/v1/products/java-runtime/2ec0cc96c44e5a76b9c8b7c39df7210883d12871/all.json"
+-                },
+-                new[]
+-                {
+-                    "https://bmclapi2.bangbang93.com/v1/products/java-runtime/2ec0cc96c44e5a76b9c8b7c39df7210883d12871/all.json"
+-                }), isJson: true);
+         // 查找要下载的目标 Java
+         string? targetName = null;
+         JsonNode? targetValue = null;
+-        var components =
+-            (JsonObject)((JsonObject)ModBase.GetJson(indexFileStr))[$"windows-x{(SystemInfo.Is32BitSystem ? "86" : "64")}"];
++        var components = _GetJavaRuntimeIndex();
+         if (components.ContainsKey(loader.input)) // 精确匹配
+         {
+             targetName = loader.input;
+diff --git a/Plain Craft Launcher 2/Modules/Minecraft/ModLaunch.cs b/Plain Craft Launcher 2/Modules/Minecraft/ModLaunch.cs
+index edf56b4..1b29f54 100644
+--- a/Plain Craft Launcher 2/Modules/Minecraft/ModLaunch.cs	
++++ b/Plain Craft Launcher 2/Modules/Minecraft/ModLaunch.cs	
+@@ -133,48 +133,6 @@ public static class ModLaunch
+         }
+ #endif
+         
+-        #if DEBUG || DEBUGCI
+-        return;
+-        #endif
+-
+-        // 正版购买提示
+-        if (!ProfileService.HasMicrosoftProfile)
+-        {
+-            if (Lang.IsFeaturesUnrestricted)
+-            {
+-                if (ModMain.MyMsgBox(
+-                        Lang.Text("Minecraft.Launch.PurchaseHint.Message"),
+-                        Lang.Text("Minecraft.Launch.PurchaseHint.Title"), Lang.Text("Minecraft.Launch.PurchaseHint.Purchase"), Lang.Text("Minecraft.Launch.PurchaseHint.Later")) ==
+-                    1)
+-                    ModBase.OpenWebsite(
+-                        "https://www.xbox.com/zh-cn/games/store/minecraft-java-bedrock-edition-for-pc/9nxp44l49shj");
+-            }
+-            else
+-            {                
+-                switch (ModMain.MyMsgBox(Lang.Text("Minecraft.Launch.AccountVerification.Message"), 
+-                            Lang.Text("Minecraft.Launch.AccountVerification.Title"), 
+-                            Lang.Text("Minecraft.Launch.AccountVerification.Purchase"), 
+-                            Lang.Text("Minecraft.Launch.AccountVerification.Demo"), 
+-                            Lang.Text("Minecraft.Launch.AccountVerification.Back"),
+-                            button1Action: () =>
+-                                ModBase.OpenWebsite(
+-                                    "https://www.xbox.com/zh-cn/games/store/minecraft-java-bedrock-edition-for-pc/9nxp44l49shj")))
+-                {
+-                    case 2:
+-                    {
+-                        HintService.Hint(Lang.Text("Minecraft.Launch.DemoMode"), HintType.Error);
+-                        currentLaunchOptions.ExtraArgs.Add("--demo");
+-                        break;
+-                    }
+-                    case 3:
+-                    {
+-                        throw new Exception("$$");
+-                    }
+-                }
+-
+-            }
+-
+-        }
+     }
+ 
+     #endregion
+@@ -1135,13 +1093,14 @@ public static class ModLaunch
+                 javaCode = 8.ToString();
+             }
+ 
+-            if (!ModJava.JavaDownloadConfirm($"Java {javaCode}"))
++            var chosenJava = ModJava.JavaDownloadConfirm($"Java {javaCode}", javaCode);
++            if (chosenJava is null)
+                 throw new Exception("$$");
+             // 开始自动下载
+             var javaLoader = ModJava.GetJavaDownloadLoader();
+             try
+             {
+-                javaLoader.Start(recommendedComponent ?? javaCode, true); // 在 Java 22+ 时优先使用 Mojang 提供的 Component 字段
++                javaLoader.Start(chosenJava.Length > 0 ? chosenJava : recommendedComponent ?? javaCode, true); // 在 Java 22+ 时优先使用 Mojang 提供的 Component 字段
+                 while (javaLoader.State == ModBase.LoadState.Loading && !task.IsAborted)
+                 {
+                     task.Progress = javaLoader.Progress;
+diff --git a/Plain Craft Launcher 2/Modules/Minecraft/ModModpack.cs b/Plain Craft Launcher 2/Modules/Minecraft/ModModpack.cs
+index a465912..cf0383e 100644
+--- a/Plain Craft Launcher 2/Modules/Minecraft/ModModpack.cs	
++++ b/Plain Craft Launcher 2/Modules/Minecraft/ModModpack.cs	
+@@ -73,13 +73,17 @@ public static class ModModpack
+ 
+             // 获取整合包种类与关键 Json
+             var packType = -1;
+-            do
++            // [Local Patch] 先按 GB18030 解码条目名（国内常见 GBK 编码打包的压缩包），识别失败再按默认 UTF-8 重试
++            foreach (var entryNameEncoding in new[] { Encoding.GetEncoding("GB18030"), null })
+             {
+                 try
+                 {
+-                    archive = new ZipArchive(new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read));
++                    archive = new ZipArchive(new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read),
++                        ZipArchiveMode.Read, false, entryNameEncoding);
+                     if (archive.Entries.Any(e => e.IsEncrypted))
+                         throw new Exception(Lang.Text("Minecraft.Download.Modpack.EncryptedArchiveUnsupported"));
++                    packType = -1;
++                    archiveBaseFolder = "";
+                     // 从根目录判断整合包类型
+                     if (archive.GetEntry("mcbbs.packmeta") is not null)
+                     {
+@@ -190,6 +194,16 @@ public static class ModModpack
+                     }
+ 
+                     if (exitTry) break;
++
++                    // [Local Patch] 兜底结构探测（原 InstallPackCompress 内逻辑前移）：
++                    // 寻找任意深度下的 "versions/实例名/实例名.json" 游戏文件夹结构
++                    if (packType == -1)
++                        foreach (var PackEntry in archive.Entries)
++                            if (ModpackCompressRegex.Match("/" + PackEntry.FullName).Success)
++                            {
++                                packType = 8;
++                                break;
++                            }
+                 }
+                 catch (Exception ex)
+                 {
+@@ -200,7 +214,21 @@ public static class ModModpack
+                     else
+                         throw new Exception(Lang.Text("Minecraft.Download.Modpack.UnsupportedArchive"), ex);
+                 }
+-            } while (false);
++
++                // [Local Patch] 该编码下识别成功则无需再换编码；否则释放后换下一种编码重试
++                if (packType != -1) break;
++                archive.Dispose();
++                archive = null;
++            }
++
++            if (packType == -1)
++            {
++                // [Local Patch] 列出压缩包顶层内容，便于定位无法识别的原因
++                var topEntries = string.Join("；",
++                    archive.Entries.Take(8).Select(e => e.FullName).Where(n => !string.IsNullOrWhiteSpace(n)));
++                throw new Exception(Lang.Text("Minecraft.Download.Modpack.UnknownArchiveStructure")
++                                    + "\n压缩包顶层内容：" + topEntries);
++            }
+ 
+             // 执行对应的安装方法
+             switch (packType)
+@@ -238,6 +266,12 @@ public static class ModModpack
+                     return InstallPackLauncherPack(file, archive, archiveBaseFolder);
+                 }
+ 
++                case 8:
++                {
++                    ModBase.Log("[ModPack] 整合包种类：游戏文件夹压缩包");
++                    return InstallPackCompress(file, archive);
++                }
++
+                 default:
+                 {
+                     ModBase.Log("[ModPack] 整合包种类：未能识别，假定为压缩包");
+@@ -1221,11 +1255,17 @@ public static class ModModpack
+ 
+     #region 普通压缩包
+ 
++    /// <summary>
++    ///     匹配任意深度下的 "versions/实例名/实例名.json" 游戏文件夹结构。
++    /// </summary>
++    private static readonly Regex ModpackCompressRegex =
++        new(@"^.*\/(?=versions\/(?<ver>[^\/]+)\/(\k<ver>)\.json$)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
++
+     private static LoaderCombo<string> InstallPackCompress(string fileAddress, ZipArchive archive)
+     {
+         // 尝试定位 .minecraft 文件夹：寻找形如 “/versions/XXX/XXX.json” 的路径
+         Match match = null;
+-        var regex = new Regex(@"^.*\/(?=versions\/(?<ver>[^\/]+)\/(\k<ver>)\.json$)", RegexOptions.IgnoreCase);
++        var regex = ModpackCompressRegex;
+         foreach (var Entry in archive.Entries)
+         {
+             var entryMatch = regex.Match("/" + Entry.FullName);
+diff --git a/Plain Craft Launcher 2/Modules/Minecraft/ProfileUi.cs b/Plain Craft Launcher 2/Modules/Minecraft/ProfileUi.cs
+index 8a4b584..98f7a0e 100644
+--- a/Plain Craft Launcher 2/Modules/Minecraft/ProfileUi.cs	
++++ b/Plain Craft Launcher 2/Modules/Minecraft/ProfileUi.cs	
+@@ -179,14 +179,8 @@ public static class ProfileUi
+         return uuid;
+     }
+ 
+-    public static bool CanCreateOtherProfile()
+-    {
+-#if DEBUG || DEBUGCI
+-        return true;
+-#else
+-        return ProfileService.HasMicrosoftProfile || (Lang.IsFeaturesUnrestricted && ProfileService.Profiles.Count > 0) || NetworkHelper.IsNetworkAvailable() is false;
+-#endif
+-    }
++    // 按需求解除限制：离线与第三方档案始终可创建。
++    public static bool CanCreateOtherProfile() => true;
+ 
+     public static void CreateProfile()
+     {
+diff --git a/Plain Craft Launcher 2/Modules/Minecraft/RestrictedFeaturePolicy.cs b/Plain Craft Launcher 2/Modules/Minecraft/RestrictedFeaturePolicy.cs
+index 252e4bb..707b945 100644
+--- a/Plain Craft Launcher 2/Modules/Minecraft/RestrictedFeaturePolicy.cs	
++++ b/Plain Craft Launcher 2/Modules/Minecraft/RestrictedFeaturePolicy.cs	
+@@ -8,26 +8,10 @@ internal static class RestrictedFeaturePolicy
+ {
+     internal static RegionAssessment Assess() => RegionPolicy.Evaluate(RegionPolicy.ReadWindowsSignals());
+ 
+-    internal static bool IsRestricted => Assess().IsRestricted;
++    // 按需求解除区域功能限制：判定逻辑保留在 Assess() 中，但不再据此拦截。
++    internal static bool IsRestricted => false;
+ 
+-    internal static bool Check(string feature, bool showHint = true)
+-    {
+-        var assessment = Assess();
+-        if (!assessment.IsRestricted) return true;
++    internal static bool Check(string feature, bool showHint = true) => true;
+ 
+-        ModBase.Log($"[RegionPolicy] 已阻止功能 {feature}，判定原因：{assessment.Reason}");
+-        if (showHint)
+-        {
+-            HintService.Hint(Lang.Text(assessment.Classification == RegionClassification.Unknown
+-                ? "Region.Feature.Unknown"
+-                : "Region.Feature.Restricted"), HintType.Error);
+-        }
+-        return false;
+-    }
+-
+-    internal static void ThrowIfRestricted(string feature)
+-    {
+-        if (Check(feature, false)) return;
+-        throw new ModBase.CancelledException();
+-    }
++    internal static void ThrowIfRestricted(string feature) { }
+ }
+diff --git a/Plain Craft Launcher 2/Modules/Updates/AnnouncementService.cs b/Plain Craft Launcher 2/Modules/Updates/AnnouncementService.cs
+index b48e9d8..0ad27f4 100644
+--- a/Plain Craft Launcher 2/Modules/Updates/AnnouncementService.cs	
++++ b/Plain Craft Launcher 2/Modules/Updates/AnnouncementService.cs	
+@@ -7,6 +7,13 @@ public static class AnnouncementService
+ {
+     public static void Load()
+     {
++        // [Local Patch] 未配置更新源时跳过公告加载
++        if (!UpdateManager.IsUpdateSourceConfigured)
++        {
++            ModBase.Log("[System] 未配置更新源，跳过公告加载");
++            return;
++        }
++
+         if (States.System.AnnounceSolution > 1)
+             return;
+ 
+diff --git a/Plain Craft Launcher 2/Modules/Updates/UpdateManager.cs b/Plain Craft Launcher 2/Modules/Updates/UpdateManager.cs
+index bb48ef7..2125076 100644
+--- a/Plain Craft Launcher 2/Modules/Updates/UpdateManager.cs	
++++ b/Plain Craft Launcher 2/Modules/Updates/UpdateManager.cs	
+@@ -12,16 +12,28 @@ public static class UpdateManager
+ {
+     public static bool isUpdateWaitingRestart;
+ 
+-    public static UpdatesWrapperModel remoteServer = new(new List<IUpdateSource>
++    private static UpdatesWrapperModel? _remoteServer;
++
++    /// <summary>
++    ///     是否已配置本地更新源（SystemUpdateSourceUrl）。未配置时一切更新检查均跳过。
++    /// </summary>
++    public static bool IsUpdateSourceConfigured =>
++        !string.IsNullOrWhiteSpace(Config.Update.SourceUrl);
++
++    /// <summary>
++    ///     更新源。仅在配置了 SystemUpdateSourceUrl 时指向自己的发布仓库，否则不包含任何源。
++    /// </summary>
++    public static UpdatesWrapperModel remoteServer => _remoteServer ??= BuildRemoteServer();
++
++    // [Local Patch] 更新源改为配置驱动：已移除 MirrorChyan 与官方源，默认不再请求任何更新服务器，防止本地构建被官方版覆盖
++    private static UpdatesWrapperModel BuildRemoteServer()
+     {
+-        new UpdatesMirrorChyanModel(),
+-        new UpdatesRandomModel(new[]
+-        {
+-            new UpdatesMinioModel("https://s3.pysio.online/pcl2-ce/", "Pysio"),
+-            new UpdatesMinioModel("https://staticassets.naids.com/resources/pclce/", "Naids")
+-        }),
+-        new UpdatesMinioModel("https://github.com/PCL-Community/PCL2_CE_Server/raw/main/", "GitHub")
+-    });
++        var sources = new List<IUpdateSource>();
++        var url = Config.Update.SourceUrl?.Trim();
++        if (!string.IsNullOrWhiteSpace(url))
++            sources.Add(new UpdatesMinioModel(url.TrimEnd('/') + "/", "Local"));
++        return new UpdatesWrapperModel(sources);
++    }
+ 
+     public static bool IsCurrentVersionBeta
+     {
+@@ -37,6 +49,9 @@ public static class UpdateManager
+     {
+         try
+         {
++            // [Local Patch] 未配置更新源时视为最新，避免误报
++            if (!IsUpdateSourceConfigured)
++                return UpdateEnums.VersionStatus.Latest;
+             if (IsCurrentVersionBeta && (int)Config.Update.UpdateChannel != 1)
+             {
+                 var isNewerThanStable = remoteServer.IsLatest(UpdateChannel.stable,
+@@ -243,6 +258,12 @@ public static class UpdateManager
+ 
+     private static void ScheduleBasedOnConfig()
+     {
++        // [Local Patch] 未配置更新源时跳过自动更新检查
++        if (!IsUpdateSourceConfigured)
++        {
++            ModBase.Log("[Update] 未配置更新源（SystemUpdateSourceUrl），已跳过自动更新检查");
++            return;
++        }
+         switch (Config.Update.UpdateMode)
+         {
+             case LauncherAutoUpdateBehavior.DownloadAndInstall:
+diff --git a/Plain Craft Launcher 2/Modules/Updates/UpdatesMirrorChyanModel.cs b/Plain Craft Launcher 2/Modules/Updates/UpdatesMirrorChyanModel.cs
+deleted file mode 100644
+index 335f4eb..0000000
+--- a/Plain Craft Launcher 2/Modules/Updates/UpdatesMirrorChyanModel.cs	
++++ /dev/null
+@@ -1,89 +0,0 @@
+-using System.Net.Http;
+-using PCL.Core.App;
+-using PCL.Core.App.Localization;
+-using PCL.Core.Utils;
+-using PCL.Network;
+-using PCL.Network.Loaders;
+-using PCL.Core.IO.Net.Http;
+-
+-namespace PCL;
+-
+-public class UpdatesMirrorChyanModel : IUpdateSource // Mirror 酱的更新格式
+-{
+-    private const string mirrorChyanBaseUrl =
+-        "https://mirrorchyan.com/api/resources/{cid}/latest?cdk={cdk}&os=win&arch={arch}&channel={channel}";
+-
+-    private const string myCid = "PCL2-CE";
+-    public string SourceName { get; set; } = "MirrorChyan";
+-
+-    public bool IsAvailable()
+-    {
+-        return !string.IsNullOrWhiteSpace(Config.Update.MirrorChyanKey);
+-    }
+-
+-    public VersionDataModel GetLatestVersion(UpdateChannel channel, UpdateArch arch)
+-    {
+-        using (var response = HttpRequest.Create(GetUrl(channel, arch))
+-                   .SendAsync()
+-                   .GetAwaiter()
+-                   .GetResult())
+-        {
+-            var ret = (JsonObject)ModBase.GetJson(response.AsString());
+-            if ((int)ret["code"] != 0)
+-                throw new Exception("Mirror 酱获取数据不成功");
+-            var data = ret["data"];
+-            var upd_url = data["url"]?.ToString();
+-            if (data is not null && string.IsNullOrWhiteSpace(upd_url))
+-                throw new Exception("无效 CDK");
+-            return new VersionDataModel
+-            {
+-                Source = SourceName,
+-                VersionCode = (int)data["version_number"],
+-                VersionName = (string)data["version_name"],
+-                Sha256 = (string)data["sha256"],
+-                Changelog = (string)data["release_note"]
+-            };
+-        }
+-    }
+-
+-    public bool RefreshCache()
+-    {
+-        return true;
+-    }
+-
+-    public bool IsLatest(UpdateChannel channel, UpdateArch arch, SemVer currentVersion, int currentVersionCode)
+-    {
+-        var latest = GetLatestVersion(channel, arch);
+-        return currentVersion >= SemVer.Parse(latest.VersionName);
+-    }
+-
+-    public VersionAnnouncementDataModel GetAnnouncementList()
+-    {
+-        throw new Exception("Mirror 酱无公告系统");
+-    }
+-
+-    public List<ModLoader.LoaderBase> GetDownloadLoader(UpdateChannel channel, UpdateArch arch, string output)
+-    {
+-        var loaders = new List<ModLoader.LoaderBase>();
+-        loaders.Add(new ModLoader.LoaderTask<int, List<DownloadFile>>(Lang.Text("Update.Task.GetDownloadInfo"), load =>
+-        {
+-            var ret = (JsonObject)Requester.FetchJson(GetUrl(channel, arch), RequestParam.WithRetry);
+-            var dlUrl = ret["data"]["url"]?.ToString();
+-            if (dlUrl is null)
+-                throw new Exception("Mirror 酱下载源不可用");
+-            load.output = new List<DownloadFile> { new(new[] { dlUrl }, output) };
+-        }));
+-        loaders.Add(new LoaderDownload(Lang.Text("Update.Task.DownloadUpdateFile"), new List<DownloadFile>()));
+-        return loaders;
+-    }
+-
+-    private string GetUrl(UpdateChannel channel, UpdateArch arch)
+-    {
+-        var reqUrl = mirrorChyanBaseUrl;
+-        reqUrl = reqUrl.Replace("{cid}", myCid);
+-        reqUrl = reqUrl.Replace("{cdk}", Config.Update.MirrorChyanKey);
+-        reqUrl = reqUrl.Replace("{arch}", arch.ToString());
+-        reqUrl = reqUrl.Replace("{channel}", channel.ToString());
+-        return reqUrl;
+-    }
+-}
+diff --git a/Plain Craft Launcher 2/Pages/PageDownload/ModDownloadLib.cs b/Plain Craft Launcher 2/Pages/PageDownload/ModDownloadLib.cs
+index a877418..f47b3e6 100644
+--- a/Plain Craft Launcher 2/Pages/PageDownload/ModDownloadLib.cs	
++++ b/Plain Craft Launcher 2/Pages/PageDownload/ModDownloadLib.cs	
+@@ -722,14 +722,16 @@ public static class ModDownloadLib
+                 javaVersion, enforceVersionRange: true);
+             if (java is null)
+             {
+-                if (!ModJava.JavaDownloadConfirm(Lang.Text("Minecraft.Download.Error.JavaVersionRequired")))
++                var chosenJava = ModJava.JavaDownloadConfirm(
++                    Lang.Text("Minecraft.Download.Error.JavaVersionRequired"), javaVersion.Major.ToString());
++                if (chosenJava is null)
+                     throw new Exception(Lang.Text("Minecraft.Download.Error.JavaNotFoundInstallCanceled"));
+                 // 开始自动下载
+                 var downloadJavaMajor = javaVersion.Major >= 9 ? javaVersion.Major : 8;
+                 var javaLoader = ModJava.GetJavaDownloadLoader();
+                 try
+                 {
+-                    javaLoader.Start(downloadJavaMajor, true);
++                    javaLoader.Start(chosenJava.Length > 0 ? chosenJava : downloadJavaMajor.ToString(), true);
+                     while (javaLoader.State == ModBase.LoadState.Loading && !task.IsAborted)
+                         Thread.Sleep(10);
+                 }
+@@ -1711,13 +1713,15 @@ public static class ModDownloadLib
+                 new Version(1, 8, 0, 60));
+             if (java is null)
+             {
+-                if (!ModJava.JavaDownloadConfirm(Lang.Text("Minecraft.Download.Error.JavaVersionRequired")))
++                var chosenJava = ModJava.JavaDownloadConfirm(
++                    Lang.Text("Minecraft.Download.Error.JavaVersionRequired"), "17");
++                if (chosenJava is null)
+                     throw new Exception(Lang.Text("Minecraft.Download.Error.JavaNotFoundInstallCanceled"));
+                 // 开始自动下载
+                 var javaLoader = ModJava.GetJavaDownloadLoader();
+                 try
+                 {
+-                    javaLoader.Start(17, true);
++                    javaLoader.Start(chosenJava.Length > 0 ? chosenJava : "17", true);
+                     while (javaLoader.State == ModBase.LoadState.Loading && !task.IsAborted)
+                         Thread.Sleep(10);
+                 }
+diff --git a/Plain Craft Launcher 2/Pages/PageLaunch/PageLaunchLeft.xaml.cs b/Plain Craft Launcher 2/Pages/PageLaunch/PageLaunchLeft.xaml.cs
+index 3ca3c55..2ef8795 100644
+--- a/Plain Craft Launcher 2/Pages/PageLaunch/PageLaunchLeft.xaml.cs	
++++ b/Plain Craft Launcher 2/Pages/PageLaunch/PageLaunchLeft.xaml.cs	
+@@ -123,8 +123,27 @@ public partial class PageLaunchLeft
+                 else
+                     ModBase.Log("[Launch] Minecraft 文件夹无效，该文件夹已不存在：" + ModFolder.mcFolderSelected,
+                         ModBase.LogLevel.Debug);
+-                ModFolder.mcFolderListLoader.WaitForExit(isForceRestart: true);
+-                States.Game.SelectedFolder = ModFolder.mcFolderList[0].Location.Replace(ModBase.exePath, "$");
++
++                // 默认使用启动器目录下的 .minecraft（便携模式），不再自动挑选其他已有文件夹
++                var portableFolder = ModBase.exePath + @".minecraft\";
++                try
++                {
++                    if (!Directory.Exists(portableFolder))
++                    {
++                        Directory.CreateDirectory(portableFolder);
++                        Directory.CreateDirectory(portableFolder + @"versions\");
++                        ModFolder.McFolderLauncherProfilesJsonCreate(portableFolder);
++                    }
++                    ModFolder.mcFolderListLoader.WaitForExit(isForceRestart: true);
++                    States.Game.SelectedFolder = @"$.minecraft\";
++                }
++                catch (Exception ex)
++                {
++                    // 启动器目录不可写时，回退为使用扫描到的第一个文件夹
++                    ModBase.Log(ex, "[Launch] 无法在启动器目录创建 .minecraft，回退为已扫描到的文件夹");
++                    ModFolder.mcFolderListLoader.WaitForExit(isForceRestart: true);
++                    States.Game.SelectedFolder = ModFolder.mcFolderList[0].Location.Replace(ModBase.exePath, "$");
++                }
+             }
+ 
+             ModBase.Log("[Launch] Minecraft 文件夹：" + ModFolder.mcFolderSelected);
+diff --git a/Plain Craft Launcher 2/Pages/PageSetup/PageSetupLeft.xaml b/Plain Craft Launcher 2/Pages/PageSetup/PageSetupLeft.xaml
+index 9acdae8..947869a 100644
+--- a/Plain Craft Launcher 2/Pages/PageSetup/PageSetupLeft.xaml	
++++ b/Plain Craft Launcher 2/Pages/PageSetup/PageSetupLeft.xaml	
+@@ -50,23 +50,6 @@
+                 </local:MyListItem.Buttons>
+             </local:MyListItem>
+ 
+-            <TextBlock Text="{DynamicResource Setup.Left.Category.Tools}" Margin="13,5,5,3" Opacity="0.6" FontSize="12" x:Name="TextToolsCategory" />
+-
+-            <local:MyListItem x:Name="ItemGameLink" IsScaleAnimationEnabled="False" Type="RadioBox" Tag="7"
+-                               Check="PageCheck"
+-                               MinPaddingRight="35" Height="36" VerticalAlignment="Top" Title="{DynamicResource Setup.Left.Item.GameLink}"
+-                              SvgIcon="lucide/bubbles">
+-                <local:MyListItem.Buttons>
+-                    <x:Array Type="{x:Type local:MyIconButton}">
+-                        <local:MyIconButton Tag="7" ToolTip="{DynamicResource Common.Action.Initialize}" ToolTipService.Placement="Right"
+-                                            ToolTipService.InitialShowDelay="200" ToolTipService.VerticalOffset="-1"
+-                                            Click="Reset"
+-                                            SvgIcon="lucide/rotate-ccw"
+-                                            LogoScale="0.9" />
+-                    </x:Array>
+-                </local:MyListItem.Buttons>
+-            </local:MyListItem>
+-
+             <TextBlock Text="{DynamicResource Setup.Left.Category.Launcher}" Margin="13,5,5,3" Opacity="0.6" FontSize="12" x:Name="TextLauncherCategory" />
+ 
+             <local:MyListItem x:Name="ItemUI" IsScaleAnimationEnabled="False" Tag="1" MinPaddingRight="35" Height="36"
+diff --git a/Plain Craft Launcher 2/Pages/PageSetup/PageSetupLeft.xaml.cs b/Plain Craft Launcher 2/Pages/PageSetup/PageSetupLeft.xaml.cs
+index d2ffd54..7d53387 100644
+--- a/Plain Craft Launcher 2/Pages/PageSetup/PageSetupLeft.xaml.cs	
++++ b/Plain Craft Launcher 2/Pages/PageSetup/PageSetupLeft.xaml.cs	
+@@ -19,7 +19,6 @@ public partial class PageSetupLeft
+         if (ItemLaunch.Checked && hide.SetupLaunch) isHiddenPage = true;
+         if (ItemJava.Checked && hide.SetupJava) isHiddenPage = true;
+         if (ItemGameManage.Checked && hide.SetupGameManage)  isHiddenPage = true;
+-        if (ItemGameLink.Checked && hide.SetupGameLink) isHiddenPage = true;
+         if (ItemUI.Checked && hide.SetupUi) isHiddenPage = true;
+         if (ItemLauncherLanguage.Checked && hide.SetupLauncherLanguage) isHiddenPage = true;
+         if (ItemLauncherMisc.Checked && hide.SetupLauncherMisc) isHiddenPage = true;
+@@ -45,8 +44,7 @@ public partial class PageSetupLeft
+             ItemJava.SetChecked(true, false, false);    
+         else if (!hideCfg.SetupGameManage) 
+             ItemGameManage.SetChecked(true, false, false);
+-        else if (!hideCfg.SetupGameLink) 
+-            ItemGameLink.SetChecked(true, false, false);    
++        // [Local Patch] 已关闭内置联机功能，跳过联机设置页
+         else if (!hideCfg.SetupUi) 
+             ItemUI.SetChecked(true, false, false);
+         else if (!hideCfg.SetupLauncherLanguage)
+@@ -111,18 +109,6 @@ public partial class PageSetupLeft
+ 
+                 break;
+             }
+-            case (double)FormMain.PageSubType.SetupGameLink:
+-            {
+-                if (ModMain.MyMsgBox(Lang.Text("Setup.Left.Reset.GameLink.Message"), Lang.Text("Setup.Left.Reset.Title"), button2: Lang.Text("Common.Action.Cancel"), isWarn: true) == 1)
+-                {
+-                    if (ModMain.frmSetupGameLink is null)
+-                        ModMain.frmSetupGameLink = new PageSetupGameLink();
+-                    ModMain.frmSetupGameLink.Reset();
+-                    ItemGameLink.Checked = true;
+-                }
+-
+-                break;
+-            }
+             case (double)FormMain.PageSubType.SetupLauncherLanguage:
+             {
+                 if (ModMain.MyMsgBox(Lang.Text("Setup.Left.Reset.Language.Message"), Lang.Text("Setup.Left.Reset.Title"), button2: Lang.Text("Common.Action.Cancel"), isWarn: true) == 1)
+@@ -212,8 +198,6 @@ public partial class PageSetupLeft
+             pageID = FormMain.PageSubType.SetupJava;
+         else if (!hideCfg.SetupGameManage)
+             pageID = FormMain.PageSubType.SetupGameManage;
+-        else if (!hideCfg.SetupGameLink)
+-            pageID = FormMain.PageSubType.SetupGameLink;    
+         else if (!hideCfg.SetupUi)
+             pageID = FormMain.PageSubType.SetupUI;
+         else if (!hideCfg.SetupLauncherLanguage)
+@@ -297,12 +281,6 @@ public partial class PageSetupLeft
+                     ModMain.frmSetupFeedback = new PageSetupFeedback();
+                 return ModMain.frmSetupFeedback;
+             }
+-            case FormMain.PageSubType.SetupGameLink:
+-            {
+-                if (ModMain.frmSetupGameLink is null)
+-                    ModMain.frmSetupGameLink = new PageSetupGameLink();
+-                return ModMain.frmSetupGameLink;
+-            }
+             case FormMain.PageSubType.SetupLauncherLanguage:
+             {
+                 if (ModMain.frmSetupLauncherLanguage is null)
+diff --git a/Plain Craft Launcher 2/Pages/PageSetup/PageSetupUI.xaml b/Plain Craft Launcher 2/Pages/PageSetup/PageSetupUI.xaml
+index 6f24165..5b92d8e 100644
+--- a/Plain Craft Launcher 2/Pages/PageSetup/PageSetupUI.xaml	
++++ b/Plain Craft Launcher 2/Pages/PageSetup/PageSetupUI.xaml	
+@@ -407,10 +407,7 @@
+                         <local:MyCheckBox Height="22" VerticalAlignment="Center" Grid.Row="2" Grid.Column="4" Text="{DynamicResource Setup.Ui.FeatureHide.Item.GameManage}"
+                                           x:Name="CheckHiddenSetupGameManage" Tag="UiHiddenSetupGameManage"
+                                           Change="CheckBoxChange" />
+-                        <local:MyCheckBox Height="22" VerticalAlignment="Center" Grid.Row="2" Grid.Column="5" Text="{DynamicResource Setup.Ui.FeatureHide.Item.GameLink}"
+-                                          x:Name="CheckHiddenSetupGameLink" Tag="UiHiddenSetupGameLink"
+-                                          Change="CheckBoxChange" />
+-                        <local:MyCheckBox Height="22" VerticalAlignment="Center" Grid.Row="2" Grid.Column="6"
++                        <local:MyCheckBox Height="22" VerticalAlignment="Center" Grid.Row="2" Grid.Column="5"
+                                           Text="{DynamicResource Setup.Ui.FeatureHide.Item.Ui}" x:Name="CheckHiddenSetupUI" Tag="UiHiddenSetupUi"
+                                           Change="CheckBoxChange" />
+                         <local:MyCheckBox Height="22" VerticalAlignment="Center" Grid.Row="3" Grid.Column="2" Text="{DynamicResource Setup.Ui.FeatureHide.Item.Language}"
+@@ -432,8 +429,7 @@
+                                           Text="{DynamicResource Setup.Ui.FeatureHide.Item.Log}" x:Name="CheckHiddenSetupLog" Tag="UiHiddenSetupLog"
+                                           Change="CheckBoxChange" />
+                         <TextBlock Grid.Row="4" VerticalAlignment="Center" HorizontalAlignment="Left" Text="{DynamicResource Setup.Ui.FeatureHide.SubTools}" />
+-                        <local:MyCheckBox Height="22" VerticalAlignment="Center" Grid.Row="4" Grid.Column="2" Text="{DynamicResource Setup.Ui.FeatureHide.Item.Lobby}" x:Name="CheckHiddenToolsGameLink" Tag="UiHiddenToolsGameLink" Change="CheckBoxChange"/>
+-                        <local:MyCheckBox Height="22" VerticalAlignment="Center" Grid.Row="4" Grid.Column="3" Text="{DynamicResource Setup.Ui.FeatureHide.Item.Toolbox}" x:Name="CheckHiddenToolsTest" Tag="UiHiddenToolsTest" Change="CheckBoxChange"/>
++                        <local:MyCheckBox Height="22" VerticalAlignment="Center" Grid.Row="4" Grid.Column="2" Text="{DynamicResource Setup.Ui.FeatureHide.Item.Toolbox}" x:Name="CheckHiddenToolsTest" Tag="UiHiddenToolsTest" Change="CheckBoxChange"/>
+                         <TextBlock Grid.Row="5" VerticalAlignment="Center" HorizontalAlignment="Left" Text="{DynamicResource Setup.Ui.FeatureHide.SubInstance}" />
+                         <local:MyCheckBox Height="22" VerticalAlignment="Center" Grid.Row="5" Grid.Column="2" Text="{DynamicResource Setup.Ui.FeatureHide.Item.Edit}"
+                                           x:Name="CheckHiddenVersionEdit" Tag="UiHiddenVersionEdit"
+diff --git a/Plain Craft Launcher 2/Pages/PageSetup/PageSetupUI.xaml.cs b/Plain Craft Launcher 2/Pages/PageSetup/PageSetupUI.xaml.cs
+index 335597f..700e776 100644
+--- a/Plain Craft Launcher 2/Pages/PageSetup/PageSetupUI.xaml.cs	
++++ b/Plain Craft Launcher 2/Pages/PageSetup/PageSetupUI.xaml.cs	
+@@ -129,13 +129,11 @@ public partial class PageSetupUI
+             CheckHiddenSetupJava.Checked = uiHidden.SetupJava;
+             CheckHiddenLauncherMisc.Checked = uiHidden.SetupLauncherMisc;
+             CheckHiddenSetupUpdate.Checked = uiHidden.SetupUpdate;
+-            CheckHiddenSetupGameLink.Checked = uiHidden.SetupGameLink;
+             CheckHiddenSetupAbout.Checked = uiHidden.SetupAbout;
+             CheckHiddenSetupFeedback.Checked = uiHidden.SetupFeedback;
+             CheckHiddenSetupLog.Checked = uiHidden.SetupLog;
+ 
+             // 子页面 工具
+-            CheckHiddenToolsGameLink.Checked = uiHidden.ToolsGameLink;
+             CheckHiddenToolsTest.Checked = uiHidden.ToolsTest;
+ 
+             // 子页面 实例设置
+@@ -774,9 +772,6 @@ public partial class PageSetupUI
+                     !HiddenForceShow && conf.SetupJava ? Visibility.Collapsed : Visibility.Visible;
+                 ModMain.frmSetupLeft.ItemUpdate.Visibility =
+                     !HiddenForceShow && conf.SetupUpdate ? Visibility.Collapsed : Visibility.Visible;
+-                ModMain.frmSetupLeft.ItemGameLink.Visibility = !HiddenForceShow && conf.SetupGameLink
+-                    ? Visibility.Collapsed
+-                    : Visibility.Visible;
+                 ModMain.frmSetupLeft.ItemAbout.Visibility =
+                     !HiddenForceShow && conf.SetupAbout ? Visibility.Collapsed : Visibility.Visible;
+                 ModMain.frmSetupLeft.ItemFeedback.Visibility = !HiddenForceShow && conf.SetupFeedback
+@@ -789,7 +784,6 @@ public partial class PageSetupUI
+                 {
+                     (ModMain.frmSetupLeft.TextGameCategory,
+                         !(conf.SetupLaunch && conf.SetupJava && conf.SetupGameManage)),
+-                    (ModMain.frmSetupLeft.TextToolsCategory, !conf.SetupGameLink),
+                     (ModMain.frmSetupLeft.TextLauncherCategory, !(conf.SetupUi && conf.SetupLauncherLanguage && conf.SetupLauncherMisc)),
+                     (ModMain.frmSetupLeft.TextAboutCategory,
+                         !(conf.SetupAbout && conf.SetupUpdate && conf.SetupFeedback && conf.SetupLog))
+@@ -819,8 +813,6 @@ public partial class PageSetupUI
+                     setupCount += 1;
+                 if (!conf.SetupUpdate)
+                     setupCount += 1;
+-                if (!conf.SetupGameLink)
+-                    setupCount += 1;
+                 if (!conf.SetupAbout)
+                     setupCount += 1;
+                 if (!conf.SetupFeedback)
+@@ -834,29 +826,20 @@ public partial class PageSetupUI
+             // 工具子页面 (FrmToolsLeft)
+             if (ModMain.frmToolsLeft is not null)
+             {
+-                ModMain.frmToolsLeft.ItemGameLink.Visibility = !HiddenForceShow && conf.ToolsGameLink
+-                    ? Visibility.Collapsed
+-                    : Visibility.Visible;
+                 ModMain.frmToolsLeft.ItemTest.Visibility =
+                     !HiddenForceShow && conf.ToolsTest ? Visibility.Collapsed : Visibility.Visible;
+-                
+-                // 处理分类标题
+-                var isGameLinkVisible = (!HiddenForceShow && !conf.ToolsGameLink) || HiddenForceShow;
+-                ModMain.frmToolsLeft.TextGameLinkCategory.Visibility = isGameLinkVisible ? Visibility.Visible : Visibility.Collapsed;
+-                if (isGameLinkVisible) ModMain.frmToolsLeft.TextGameLinkCategory.Opacity = 0.6;
+ 
++                // 处理分类标题
+                 var isToolsVisible = (!HiddenForceShow && !conf.ToolsTest) || HiddenForceShow;
+                 ModMain.frmToolsLeft.TextToolsCategory.Visibility = isToolsVisible ? Visibility.Visible : Visibility.Collapsed;
+                 if (isToolsVisible) ModMain.frmToolsLeft.TextToolsCategory.Opacity = 0.6;
+-                
++
+                 // 统计工具页可用项数量
+                 var toolsCount = 0;
+-                if (!conf.ToolsGameLink)
+-                    toolsCount += 1;
+                 if (!conf.ToolsTest)
+                     toolsCount += 1;
+                 ModMain.frmToolsLeft.PanItem.Visibility =
+-                    toolsCount < 2 && !HiddenForceShow ? Visibility.Collapsed : Visibility.Visible;
++                    toolsCount < 1 && !HiddenForceShow ? Visibility.Collapsed : Visibility.Visible;
+             }
+ 
+             // 其他入口刷新
+@@ -890,7 +873,6 @@ public partial class PageSetupUI
+         CheckHiddenLauncherMisc.Checked = isChecked;
+         CheckHiddenSetupJava.Checked = isChecked;
+         CheckHiddenSetupUpdate.Checked = isChecked;
+-        CheckHiddenSetupGameLink.Checked = isChecked;
+         CheckHiddenSetupAbout.Checked = isChecked;
+         CheckHiddenSetupFeedback.Checked = isChecked;
+         CheckHiddenSetupLog.Checked = isChecked;
+@@ -909,7 +891,6 @@ public partial class PageSetupUI
+         CheckHiddenLauncherMisc.Checked = isChecked;
+         CheckHiddenSetupJava.Checked = isChecked;
+         CheckHiddenSetupUpdate.Checked = isChecked;
+-        CheckHiddenSetupGameLink.Checked = isChecked;
+         CheckHiddenSetupAbout.Checked = isChecked;
+         CheckHiddenSetupFeedback.Checked = isChecked;
+         CheckHiddenSetupLog.Checked = isChecked;
+@@ -922,7 +903,7 @@ public partial class PageSetupUI
+         var conf = Config.Preference.Hide;
+         // 判断是否全部勾选
+         var allChecked = conf.SetupLaunch && conf.SetupUi && conf.SetupLauncherLanguage && conf.SetupJava &&
+-                         conf.SetupUpdate && conf.SetupGameLink && conf.SetupAbout && conf.SetupFeedback &&
++                         conf.SetupUpdate && conf.SetupAbout && conf.SetupFeedback &&
+                          conf.SetupLog && conf.SetupLauncherMisc && conf.SetupGameManage;
+         CheckHiddenPageSetup.Checked = allChecked;
+     }
+@@ -933,7 +914,6 @@ public partial class PageSetupUI
+         if (!user)
+             return;
+         var isChecked = (bool)CheckHiddenPageTools.Checked;
+-        CheckHiddenToolsGameLink.Checked = isChecked;
+         CheckHiddenToolsTest.Checked = isChecked;
+     }
+ 
+@@ -942,7 +922,7 @@ public partial class PageSetupUI
+         if (!user)
+             return;
+         var conf = Config.Preference.Hide;
+-        var allChecked = conf.ToolsGameLink && conf.ToolsTest;
++        var allChecked = conf.ToolsTest;
+         CheckHiddenPageTools.Checked = allChecked;
+     }
+ 
+diff --git a/Plain Craft Launcher 2/Pages/PageSetup/PageSetupUpdate.xaml b/Plain Craft Launcher 2/Pages/PageSetup/PageSetupUpdate.xaml
+index c75b7c8..dd66fd6 100644
+--- a/Plain Craft Launcher 2/Pages/PageSetup/PageSetupUpdate.xaml	
++++ b/Plain Craft Launcher 2/Pages/PageSetup/PageSetupUpdate.xaml	
+@@ -46,14 +46,6 @@
+                             <local:MyComboBoxItem Content="{DynamicResource Setup.Update.Auto.NotifyOnly}" ToolTip="{DynamicResource Setup.Update.Auto.NotifyOnly.ToolTip}" />
+                             <local:MyComboBoxItem Content="{DynamicResource Setup.Update.Auto.Disabled}" ToolTip="{DynamicResource Setup.Update.Auto.Disabled.ToolTip}" />
+                         </local:MyComboBox>
+-                        <TextBlock Text="{DynamicResource Setup.Update.MirrorChyanCdk.Label}" Grid.Row="4" VerticalAlignment="Center"
+-                                   HorizontalAlignment="Left" Margin="0,0,25,0" />
+-                        <PasswordBox x:Name="TextMirrorCDK"
+-                                      ToolTip="{DynamicResource Setup.Update.MirrorChyanCdk.ToolTip}"
+-                                     Grid.Row="4" Grid.Column="1"
+-                                     PasswordChanged="TextMirrorCDK_PasswordChanged" />
+-                        <local:MyButton x:Name="BtnGetMirrorCDK" Text="{DynamicResource Setup.Update.MirrorChyanCdk.Get}" Grid.Column="3" Grid.Row="4"
+-                                        ColorType="Highlight" Click="BtnGetMirrorCDK_Click" />
+                     </Grid>
+                 </StackPanel>
+             </local:MyCard>
+diff --git a/Plain Craft Launcher 2/Pages/PageSetup/PageSetupUpdate.xaml.cs b/Plain Craft Launcher 2/Pages/PageSetup/PageSetupUpdate.xaml.cs
+index ee0469c..994c78f 100644
+--- a/Plain Craft Launcher 2/Pages/PageSetup/PageSetupUpdate.xaml.cs	
++++ b/Plain Craft Launcher 2/Pages/PageSetup/PageSetupUpdate.xaml.cs	
+@@ -21,7 +21,6 @@ public partial class PageSetupUpdate
+     private void Init()
+     {
+         ModAnimation.AniBeginControl();
+-        TextMirrorCDK.Password = Config.Update.MirrorChyanKey;
+ 
+         ComboSystemUpdateChannel.SelectedIndex = (int)Config.Update.UpdateChannel;
+         ComboSystemUpdateMode.SelectedIndex = (int)Config.Update.UpdateMode;
+@@ -33,6 +32,13 @@ public partial class PageSetupUpdate
+ 
+     private async Task<UpdateStatus> IsLatestAsync()
+     {
++        // [Local Patch] 未配置更新源时直接报告最新，避免请求外部服务器
++        if (!UpdateManager.IsUpdateSourceConfigured)
++        {
++            ModBase.Log("[Update] 未配置更新源（SystemUpdateSourceUrl），跳过更新检查");
++            return UpdateStatus.Latest;
++        }
++
+         try
+         {
+             // 修复：使用 dynamic 绕过命名空间重名导致的编译期类型冲突，
+@@ -244,16 +250,6 @@ public partial class PageSetupUpdate
+         }
+     }
+ 
+-    private void TextMirrorCDK_PasswordChanged(object sender, EventArgs e)
+-    {
+-        Config.Update.MirrorChyanKey = TextMirrorCDK.Password;
+-    }
+-
+-    private void BtnGetMirrorCDK_Click(object sender, MouseButtonEventArgs e)
+-    {
+-        ModBase.OpenWebsite("https://mirrorchyan.com/");
+-    }
+-
+     private void BtnChangelog_Click(object sender, MouseButtonEventArgs e)
+     {
+         ModBase.OpenWebsite("https://github.com/PCL-Community/PCL2-CE/releases/v" + ModBase.versionBaseName);
+diff --git a/Plain Craft Launcher 2/Pages/PageTools/PageToolsLeft.xaml b/Plain Craft Launcher 2/Pages/PageTools/PageToolsLeft.xaml
+index 446d119..e843094 100644
+--- a/Plain Craft Launcher 2/Pages/PageTools/PageToolsLeft.xaml	
++++ b/Plain Craft Launcher 2/Pages/PageTools/PageToolsLeft.xaml	
+@@ -7,34 +7,6 @@
+                   mc:Ignorable="d">
+     <StackPanel Orientation="Vertical" x:Name="PanItem" Margin="0,12,0,0">
+ 
+-        <TextBlock Text="{DynamicResource Tools.Left.Multiplayer}"
+-                   Margin="13,5,5,3"
+-                   Opacity="0.6" FontSize="12"
+-                   x:Name="TextGameLinkCategory" />
+-
+-        <local:MyListItem x:Name="ItemGameLink"
+-                          IsScaleAnimationEnabled="False"
+-                          Type="RadioBox" Tag="1"
+-                          Check="PageCheck"
+-                          MinPaddingRight="35" Height="36"
+-                          VerticalAlignment="Top"
+-                          Title="{DynamicResource Tools.Left.Lobby}"
+-                          LogoScale="0.85"
+-                          SvgIcon="lucide/link-2">
+-            <local:MyListItem.Buttons>
+-                <x:Array Type="{x:Type local:MyIconButton}">
+-                    <local:MyIconButton Tag="1"
+-                                        ToolTip="{DynamicResource Common.Action.Refresh}"
+-                                        ToolTipService.Placement="Right"
+-                                        ToolTipService.InitialShowDelay="200"
+-                                        ToolTipService.VerticalOffset="-1"
+-                                        LogoScale="0.85"
+-                                        Click="Refresh"
+-                                        SvgIcon="lucide/refresh-cw" />
+-                </x:Array>
+-            </local:MyListItem.Buttons>
+-        </local:MyListItem>
+-
+         <TextBlock Text="{DynamicResource Tools.Left.Utilities}" Margin="13,5,5,3" Opacity="0.6" FontSize="12"
+                    x:Name="TextToolsCategory" />
+         <local:MyListItem x:Name="ItemTest"
+diff --git a/Plain Craft Launcher 2/Pages/PageTools/PageToolsLeft.xaml.cs b/Plain Craft Launcher 2/Pages/PageTools/PageToolsLeft.xaml.cs
+index 70ea2d3..a145b93 100644
+--- a/Plain Craft Launcher 2/Pages/PageTools/PageToolsLeft.xaml.cs	
++++ b/Plain Craft Launcher 2/Pages/PageTools/PageToolsLeft.xaml.cs	
+@@ -23,7 +23,6 @@ public partial class PageToolsLeft
+         var isHiddenPage = false;
+         var hide = Config.Preference.Hide;
+ 
+-        if (ItemGameLink.Checked && hide.ToolsGameLink) isHiddenPage = true;
+         if (ItemTest.Checked && hide.ToolsTest) isHiddenPage = true;
+         if (PageSetupUI.HiddenForceShow)
+             isHiddenPage = false;
+@@ -36,13 +35,8 @@ public partial class PageToolsLeft
+         // 选择第一个未被禁用的子页面
+         if (isPageSwitched) 
+             return;
+-        var hideCfg = Config.Preference.Hide;
+-        if (!hideCfg.ToolsGameLink)
+-            ItemGameLink.SetChecked(true, false, false);
+-        else if (!hideCfg.ToolsTest)
+-            ItemTest.SetChecked(true, false, false);
+-        else
+-            ItemGameLink.SetChecked(true, false, false);
++        // [Local Patch] 已关闭内置联机功能，工具页固定选中实用工具
++        ItemTest.SetChecked(true, false, false);
+     }
+ 
+     private void PageOtherLeft_Unloaded(object sender, RoutedEventArgs e)
+@@ -50,31 +44,12 @@ public partial class PageToolsLeft
+         isPageSwitched = false;
+     }
+ 
+-    public void Refresh(object sender, EventArgs e)
+-    {
+-        var button = (MyIconButton)sender;
+-        if (button.Tag is null)
+-            return;
+-        double id = ModBase.Val(button.Tag);
+-        switch (id)
+-        {
+-            case (double)FormMain.PageSubType.ToolsGameLink:
+-            {
+-                if (ModMain.frmToolsGameLink is null)
+-                    ModMain.frmToolsGameLink = new PageToolsGameLink();
+-                ModMain.frmToolsGameLink.Reload();
+-                ItemGameLink.Checked = true;
+-                break;
+-            }
+-        }
+-    }
+-
+     #region 页面切换
+ 
+     /// <summary>
+     ///     当前页面的编号。
+     /// </summary>
+-    public FormMain.PageSubType pageID = FormMain.PageSubType.ToolsGameLink;
++    public FormMain.PageSubType pageID = FormMain.PageSubType.ToolsTest;
+ 
+     /// <summary>
+     ///     勾选事件改变页面。
+@@ -93,12 +68,6 @@ public partial class PageToolsLeft
+         var targetID = id ?? pageID;
+         switch (id)
+         {
+-            case FormMain.PageSubType.ToolsGameLink:
+-            {
+-                if (ModMain.frmToolsGameLink is null)
+-                    ModMain.frmToolsGameLink = new PageToolsGameLink();
+-                return ModMain.frmToolsGameLink;
+-            }
+             case FormMain.PageSubType.ToolsTest:
+             {
+                 if (ModMain.frmToolsTest is null)
+diff --git a/Plain Craft Launcher 2/Plain Craft Launcher 2.csproj b/Plain Craft Launcher 2/Plain Craft Launcher 2.csproj
+index 92f84ca..ea6358f 100644
+--- a/Plain Craft Launcher 2/Plain Craft Launcher 2.csproj	
++++ b/Plain Craft Launcher 2/Plain Craft Launcher 2.csproj	
+@@ -74,8 +74,6 @@
+         <PackageReference Include="NAudio" Version="2.3.0" />
+         <PackageReference Include="protobuf-net" Version="3.2.56" />
+         <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.3" />
+-        <PackageReference Include="System.Net.Http" Version="4.3.4" />
+-        <PackageReference Include="System.Text.RegularExpressions" Version="4.3.1" />
+     </ItemGroup>
+     <ItemGroup>
+         <ProjectReference Include="..\PCL.Core\PCL.Core.csproj" />
+diff --git a/Plain Craft Launcher 2/metadata.json b/Plain Craft Launcher 2/metadata.json
+index ecbed27..317b18d 100644
+--- a/Plain Craft Launcher 2/metadata.json	
++++ b/Plain Craft Launcher 2/metadata.json	
+@@ -3,7 +3,7 @@
+   "version": {
+     "base": "2.15.1",
+     "upstream": "2.12.1",
+-    "suffix": "",
++    "suffix": "local",
+     "code": 524
+   },
+   "licenses": [

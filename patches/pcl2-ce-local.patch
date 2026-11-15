@@ -115,14 +115,75 @@ index 787b37d..5476c2e 100644
 +artifact/
 diff --git a/LOCAL-CHANGELOG.md b/LOCAL-CHANGELOG.md
 new file mode 100644
-index 0000000..5bf8f45
+index 0000000..999eb6a
 --- /dev/null
 +++ b/LOCAL-CHANGELOG.md
-@@ -0,0 +1,102 @@
+@@ -0,0 +1,163 @@
 +# 本地构建更新日志（LOCAL-CHANGELOG）
 +
 +> 本文件记录相对上游 `PCL-Community/PCL-CE`（dev 分支，2026-10-30 克隆）的全部本地改动。
-+> 所有改动在源码中以 `// [Local Patch]` 注释标记。**请勿以 PCL-CE 名义分发本构建。**
++> 所有改动在源码中以 `// [Local Patch]` 注释标记。**请勿以 PCL-CE 官方名义分发本构建。**
++
++## local.9 — 2026-11-14
++
++### 微软登录引导与构建密钥注入
++
++- 问题：本地构建不含 `MS_CLIENT_ID` 密钥（正式版由 CI 注入），点「微软登录」会抛裸异常「Microsoft OAuth client id is not configured」。
++- 修复：登录页检测到未配置 Client ID 时给出明确指引（改用离线登录 / 自行注册 Azure 应用并在构建时注入），不再抛裸异常。
++- 构建支持密钥注入：`build.ps1` 现在会加载同目录的 `.secrets.env`（`PCL_*` 键值对），配合 `PCL_WRITE_SECRET=1` 由源码生成器把密钥编译进 exe；新增 `.secrets.env.example` 模板（含 Azure 应用注册步骤说明）。
++- 新增文案键 `Launch.Account.Microsoft.ClientIdMissing`（zh-CN/zh-TW/en-US/en-GB）。
++
++## local.8 — 2026-11-14
++
++### 修复：Fabric loader 安装失败（Fabric meta 下载失败）
++
++- 实测定位（对 26.3 与 1.21.1 双版本验证）：`bmclapi2.bangbang93.com/fabric-meta/v2/versions/loader/{mc}/{loader}/profile/json` 对所有版本 404（镜像路径已失效）；`meta.fabricmc.net` 同形 URL 带 "loader" 别名一律 400（官方 meta 已不接受该形式）。带具体 loader 版本号的三段式 URL 则两源均 200。
++- 修复（`McDownloadFabricLoader`）：安装时先解析实际 loader 版本——传入版本无效（如字面量 "loader"）或为空时，自动从 `meta.fabricmc.net/v2/versions/loader/{mc}` 取最新版本（如 26.3 → 0.20.1），再以具体版本构造 profile 地址（bmclapi 镜像 + 官方双源保留）；解析失败且无有效传入版本时给出明确错误。
++- 所有 Fabric 安装入口（版本安装页、实例设置页、启动补装、整合包内嵌 Fabric）统一受益。
++- 修正解析器形状：per-game loader 列表条目为 `{"loader":{"version":"..."},...}`（版本嵌套在 loader 键下），与聚合列表的扁平形状并存兼容。已用真实端点端到端验证：26.3 → 最新 loader 0.20.1，官方源与 BMCLAPI 镜像 profile 均获取成功。
++- 触发场景补充：用户重打包的 CurseForge 格式包 manifest 中 Fabric 声明为裸 `fabric-loader`（无版本号），`id.Replace("fabric-","")` 推导出 "loader"——解析器自动改用该 MC 版本最新 loader 安装。
++
++## local.7 — 2026-11-14
++
++### 整合包安装流程重做：拖入即自动安装
++
++- 旧流程：识别后弹「选择一个空文件夹」→ 用户选择 → 整包解压到所选文件夹 → AddFolder。两个问题：弹窗反复出现被感知为「循环」；且平铺包解压后是散装布局，PCL 实例扫描（只认 versions/ 下实例）找不到实例，表现为「未找到可用 Minecraft 实例」。
++- 新流程：识别命中后**自动安装到当前游戏文件夹的 `versions\实例名\`**（版本隔离布局）：
++  - 实例名取版本 json 文件名（过滤非法字符）；
++  - 解压按命中目录前缀剥离包裹层，嵌套包与根平铺包统一处理；命中目录之外的条目跳过；
++  - `versions\实例名\` 已存在时确认覆盖；
++  - 解压带 GB18030→UTF-8 编码重试与 zip-slip 目录包含校验；
++  - 完成后强制刷新实例列表、跳转实例选择页并弹成功提示（含安装路径）。
++- 新增文案键 `Minecraft.Download.Modpack.OverwriteConfirm(.Title)` / `InstallSuccess`（zh-CN/zh-TW/en-US/en-GB）。
++- 平铺包安装结果即版本隔离实例：`versions\Catgirl Server 26.3\` 内含 json/jar/mods/config/PCL 等，与源实例布局一致。
++
++## local.6 — 2026-11-14
++
++### 修复：平铺式游戏文件夹包无法识别 + 诊断路径 NRE
++
++- 真实案例：直接打包 PCL 隔离实例文件夹得到的平铺 zip（版本 `json+jar` 在根目录，无 `versions/` 层级），原兜底正则只认 `versions/实例名/实例名.json`，两种编码下均识别失败；且识别失败路径上存在 NRE（archive 被置空后仍被顶层条目诊断逻辑引用）。
++- 修复：兜底识别泛化为「任意目录下同名 json+jar 对」（兼容 versions 层级与平铺，含根目录平铺）；探测循环不再置空 archive，NRE 消除且诊断信息可靠。
++- 已用真实包与构造的 versions 层级包双样本验证命中：平铺包基目录为空、实例名取 json 文件名；versions 层级包行为与原版一致。
++
++## local.5 — 2026-11-14
++
++### 自有更新通道上线（GitHub Releases 直连源）
++
++- 网络实测（本机）：`api.github.com` 与 Release 资产对象存储域可达；`cdn.jsdelivr.net`/`raw.githubusercontent.com`/`github.com` 主站均不可达或严重劣化。据此新增 **`UpdatesGitHubModel`** 更新源：
++  - 版本检查 `GET {apiBase}releases/latest`（api.github.com），元数据与更新包走 Release 资产（update-meta.json + zip，对象存储域）；
++  - Release 需附带 `update-meta.json`：`{"versionCode":int,"exeSha256":"...","changelog":"<summary>...</summary>"}`；
++  - 公告返回空列表（该源不提供公告）。
++- `SystemUpdateSourceUrl` 默认值烘焙为 `https://api.github.com/repos/yanwanshi/PCL-CE-Hyan/`——所有副本开箱即用内部更新；URL 含 `api.github.com/repos/` 时走 GitHub 模型，其余仍走 Minio 多镜像。
++- 首版已发布：https://github.com/yanwanshi/PCL-CE-Hyan/releases/tag/v2.15.1-local（zip + update-meta.json），冒烟验证「远程最新版本: 2.15.1-local」判定通过。
++- 新增 `publish-update.ps1`：打包 exe → 计算 sha256 → 同步补丁/日志到仓库 → 创建 Release → 上传资产。（注意：本版脚本的 apiv2 JSON 流程已废弃待改，见待办。）
++
++### 许可合规（公开分发要求落实）
++
++- 依据《PCL 存储库合理使用指南》重度使用条款：
++  - 产品显示名改为 **「PCL2CE 个人修改版」**（保留 PCL2CE 字样 + 修改后缀，条款 1/2）；
++  - 恢复启动时**非阻断**正版购买劝导（条款 4；不恢复阻断式验证弹窗，离线登录不受影响）；
++  - 更新仓库附带补丁集与本日志 = 公开源代码（条款 3）；关于页署名继承 CE（条款 3）。
++- 更新仓库：https://github.com/yanwanshi/PCL-CE-Hyan（公开，README 含署名与许可说明）。
 +
 +## local.4 — 2026-11-14
 +
@@ -222,10 +283,10 @@ index 0000000..5bf8f45
 +
 +`.github/workflows/release-publish.yml`（删除 MirrorChyan 触发）｜删除 `.github/workflows/mirrorchyan_*.yml`｜`PCL.Core/App/Config.cs`｜`PCL.Core/App/Localization/Languages/*.xaml` ×5｜`PCL.Core/Link/Lobby/LobbyService.cs`｜`PCL.Core/PCL.Core.csproj`｜`CrashAnalysis/*` ×4｜`Modules/Minecraft/ModJava.cs`、`ModLaunch.cs`、`ProfileUi.cs`、`RestrictedFeaturePolicy.cs`｜`Modules/Updates/UpdateManager.cs`｜删除 `Modules/Updates/UpdatesMirrorChyanModel.cs`｜`Pages/PageDownload/ModDownloadLib.cs`｜`Pages/PageLaunch/PageLaunchLeft.xaml.cs`｜`Pages/PageSetup/*` ×5｜`Pages/PageTools/PageToolsLeft.xaml(.cs)`｜删除 `Plain Craft Launcher 2.csproj` 冗余引用
 diff --git a/PCL.Core/App/Config.cs b/PCL.Core/App/Config.cs
-index d97d3fa..eed8052 100644
+index d97d3fa..27ac058 100644
 --- a/PCL.Core/App/Config.cs
 +++ b/PCL.Core/App/Config.cs
-@@ -126,11 +126,11 @@ public static partial class Config
+@@ -126,11 +126,13 @@ public static partial class Config
          /// 更新分支。
          /// </summary>
          [ConfigItem<UpdateChannel>("SystemUpdateChannel", UpdateChannel.Release, ConfigSource.Local)] public partial UpdateChannel UpdateChannel { get; set; }
@@ -233,15 +294,17 @@ index d97d3fa..eed8052 100644
 +
          /// <summary>
 -        /// Mirror 酱 CDK。
-+        /// 自定义更新源地址（Minio 格式仓库的根地址，如 GitHub 仓库 raw 地址）。留空则不进行任何更新检查。
++        /// 自定义更新源地址。支持两种形式：
++        /// GitHub Releases 源（https://api.github.com/repos/&lt;owner&gt;/&lt;repo&gt;/），
++        /// 或 Minio 格式仓库根地址。留空则不进行任何更新检查。
          /// </summary>
 -        [ConfigItem<string>("SystemMirrorChyanKey", "", ConfigSource.SharedEncrypt)] public partial string MirrorChyanKey { get; set; }
-+        [ConfigItem<string>("SystemUpdateSourceUrl", "", ConfigSource.Local)] public partial string SourceUrl { get; set; }
++        [ConfigItem<string>("SystemUpdateSourceUrl", "https://api.github.com/repos/yanwanshi/PCL-CE-Hyan/", ConfigSource.Local)] public partial string SourceUrl { get; set; }
      }
  
      /// <summary>
 diff --git a/PCL.Core/App/Localization/Languages/en-GB.xaml b/PCL.Core/App/Localization/Languages/en-GB.xaml
-index 50040ce..8cdf378 100644
+index 50040ce..578feeb 100644
 --- a/PCL.Core/App/Localization/Languages/en-GB.xaml
 +++ b/PCL.Core/App/Localization/Languages/en-GB.xaml
 @@ -127,8 +127,12 @@
@@ -363,7 +426,25 @@ index 50040ce..8cdf378 100644
      <sys:String x:Key="Crash.Suggestion.TooManyModsIdLimit">Reduce the number of installed mods, or install a fix mod that extends the ID limit for older Minecraft versions.</sys:String>
      <sys:String x:Key="Crash.Suggestion.UsingJdk">Switch to a regular JRE or another Java version that is suitable for this instance in launch settings.</sys:String>
      <sys:String x:Key="Crash.Suggestion.UsingOpenJ9">Switch to HotSpot Java in launch settings and try again.</sys:String>
-@@ -2191,6 +2221,7 @@
+@@ -1523,6 +1553,7 @@
+ 
+     <!-- Launch.Account.Microsoft -->
+ 
++    <sys:String x:Key="Launch.Account.Microsoft.ClientIdMissing">This local build does not include the OAuth client ID required for Microsoft login.&#xA;&#xA;You can use offline login to play. For Microsoft login, register your own Azure app to get a client ID and inject it at build time via PCL_MS_CLIENT_ID (see .secrets.env.example next to build.ps1).</sys:String>
+     <sys:String x:Key="Launch.Account.Microsoft.Error.OperationFailed">A Microsoft sign-in operation failed. See the details below.</sys:String>
+     <sys:String x:Key="Launch.Account.Microsoft.Error.Unknown">Unknown error!</sys:String>
+     <sys:String x:Key="Launch.Account.Microsoft.LoginFailed.Message">Microsoft login authentication failed.&#xA;Please consider disabling the 'Verify SSL certificates for Microsoft login' option in 'Settings → Miscellaneous' and try again.&#xA;&#xA;Original error message:</sys:String>
+@@ -1998,6 +2029,9 @@
+     <sys:String x:Key="Minecraft.Download.Modpack.QuiltUnsupported">Cannot install this modpack: Quilt is no longer supported by this launcher.</sys:String>
+     <sys:String x:Key="Minecraft.Download.Modpack.RarUnsupported">PCL CE cannot handle .rar archive files. Please extract and re-archive them in .zip format and try again!</sys:String>
+     <sys:String x:Key="Minecraft.Download.Modpack.SelectEmptyFolder.Message">Next, select an empty folder. The modpack will be installed there.</sys:String>
++    <sys:String x:Key="Minecraft.Download.Modpack.OverwriteConfirm">Instance {0} already exists. Overwrite it?</sys:String>
++    <sys:String x:Key="Minecraft.Download.Modpack.OverwriteConfirm.Title">Overwrite</sys:String>
++    <sys:String x:Key="Minecraft.Download.Modpack.InstallSuccess">The modpack has been installed to versions\{0}. Select it in the instance list to play.</sys:String>
+     <sys:String x:Key="Minecraft.Download.Modpack.SelectTargetFolder.Title">Select installation target (must be an empty folder)</sys:String>
+     <sys:String x:Key="Minecraft.Download.Modpack.SomeModsDeleted">Some mod versions in the modpack have been deleted by the mod authors, so installation cannot continue. Please report this issue to the modpack author.</sys:String>
+     <sys:String x:Key="Minecraft.Download.Modpack.TargetFolderMustBeEmpty">Please select an empty folder as the installation target!</sys:String>
+@@ -2191,6 +2225,7 @@
  
      <sys:String x:Key="Minecraft.Launch.Java.AutoDownload.Action">Download automatically</sys:String>
      <sys:String x:Key="Minecraft.Launch.Java.AutoDownload.Message">PCL CE could not find {0}. Would you like PCL CE to download it automatically?&#xA;If you have already installed {0}, you can import it manually under Settings → Launch options → Game Java.</sys:String>
@@ -371,7 +452,7 @@ index 50040ce..8cdf378 100644
      <sys:String x:Key="Minecraft.Launch.Java.AutoDownload.Title">Download Java automatically?</sys:String>
      <sys:String x:Key="Minecraft.Launch.Java.Compatibility.CheckFailed">Failed to check Java compatibility. See the details below.</sys:String>
      <sys:String x:Key="Minecraft.Launch.Java.Compatibility.GlobalSelectedOutOfRange">The globally selected Java ({0}) is outside the required range [{1}, {2}] and may cause the game to crash.</sys:String>
-@@ -3189,9 +3220,6 @@
+@@ -3189,9 +3224,6 @@
      <sys:String x:Key="Setup.Update.Error.NetworkFailed">Unable to retrieve latest version information. Please check your network connection.</sys:String>
      <sys:String x:Key="Setup.Update.Install">Download and install</sys:String>
      <sys:String x:Key="Setup.Update.Latest">Already up to date</sys:String>
@@ -382,7 +463,7 @@ index 50040ce..8cdf378 100644
      <sys:String x:Key="Setup.Update.OtherOptions.Title">Other update options - upgrade to AquaCL</sys:String>
      <sys:String x:Key="Setup.Update.RestartInstall">Restart to install</sys:String>
 diff --git a/PCL.Core/App/Localization/Languages/en-US.xaml b/PCL.Core/App/Localization/Languages/en-US.xaml
-index a3606d4..4de242a 100644
+index a3606d4..3d84d2d 100644
 --- a/PCL.Core/App/Localization/Languages/en-US.xaml
 +++ b/PCL.Core/App/Localization/Languages/en-US.xaml
 @@ -160,8 +160,12 @@
@@ -504,7 +585,25 @@ index a3606d4..4de242a 100644
      <sys:String x:Key="Crash.Suggestion.TooManyModsIdLimit">Reduce the number of installed mods, or install a fix mod that extends the ID limit for older Minecraft versions.</sys:String>
      <sys:String x:Key="Crash.Suggestion.UsingJdk">Switch to a regular JRE or another Java version that is suitable for this instance in launch settings.</sys:String>
      <sys:String x:Key="Crash.Suggestion.UsingOpenJ9">Switch to HotSpot Java in launch settings and try again.</sys:String>
-@@ -2283,6 +2313,7 @@
+@@ -1608,6 +1638,7 @@
+ 
+     <!-- Launch.Account.Microsoft -->
+ 
++    <sys:String x:Key="Launch.Account.Microsoft.ClientIdMissing">This local build does not include the OAuth client ID required for Microsoft login.&#xA;&#xA;You can use offline login to play. For Microsoft login, register your own Azure app to get a client ID and inject it at build time via PCL_MS_CLIENT_ID (see .secrets.env.example next to build.ps1).</sys:String>
+     <sys:String x:Key="Launch.Account.Microsoft.Error.OperationFailed">A Microsoft sign-in operation failed. See the details below.</sys:String>
+     <sys:String x:Key="Launch.Account.Microsoft.Error.Unknown">Unknown error!</sys:String>
+     <sys:String x:Key="Launch.Account.Microsoft.LoginFailed.Message">Microsoft login authentication failed.&#xA;Please consider disabling the "Verify SSL certificates for Microsoft login" option in "Settings → Miscellaneous" and try again.&#xA;&#xA;Original error message:</sys:String>
+@@ -2090,6 +2121,9 @@
+     <sys:String x:Key="Minecraft.Download.Modpack.QuiltUnsupported">Cannot install this modpack: Quilt is no longer supported by this launcher.</sys:String>
+     <sys:String x:Key="Minecraft.Download.Modpack.RarUnsupported">PCL CE cannot handle .rar archive files. Please extract and re-archive them in .zip format and try again!</sys:String>
+     <sys:String x:Key="Minecraft.Download.Modpack.SelectEmptyFolder.Message">Next, select an empty folder. The modpack will be installed there.</sys:String>
++    <sys:String x:Key="Minecraft.Download.Modpack.OverwriteConfirm">Instance {0} already exists. Overwrite it?</sys:String>
++    <sys:String x:Key="Minecraft.Download.Modpack.OverwriteConfirm.Title">Overwrite</sys:String>
++    <sys:String x:Key="Minecraft.Download.Modpack.InstallSuccess">The modpack has been installed to versions\{0}. Select it in the instance list to play.</sys:String>
+     <sys:String x:Key="Minecraft.Download.Modpack.SelectTargetFolder.Title">Select installation target (must be an empty folder)</sys:String>
+     <sys:String x:Key="Minecraft.Download.Modpack.SomeModsDeleted">Some mod versions in the modpack have been deleted by the mod authors, so installation cannot continue. Please report this issue to the modpack author.</sys:String>
+     <sys:String x:Key="Minecraft.Download.Modpack.TargetFolderMustBeEmpty">Please select an empty folder as the installation target!</sys:String>
+@@ -2283,6 +2317,7 @@
  
      <sys:String x:Key="Minecraft.Launch.Java.AutoDownload.Action">Download automatically</sys:String>
      <sys:String x:Key="Minecraft.Launch.Java.AutoDownload.Message">PCL CE could not find {0}. Would you like PCL CE to download it automatically?&#xA;If you have already installed {0}, you can import it manually under Settings → Launch options → Game Java.</sys:String>
@@ -512,7 +611,7 @@ index a3606d4..4de242a 100644
      <sys:String x:Key="Minecraft.Launch.Java.AutoDownload.Title">Download Java automatically?</sys:String>
      <sys:String x:Key="Minecraft.Launch.Java.Compatibility.CheckFailed">Failed to check Java compatibility. See the details below.</sys:String>
      <sys:String x:Key="Minecraft.Launch.Java.Compatibility.GlobalSelectedOutOfRange">The globally selected Java ({0}) is outside the required range [{1}, {2}] and may cause the game to crash.</sys:String>
-@@ -3296,9 +3327,6 @@
+@@ -3296,9 +3331,6 @@
      <sys:String x:Key="Setup.Update.Error.NetworkFailed">Unable to retrieve latest version information. Please check your network connection.</sys:String>
      <sys:String x:Key="Setup.Update.Install">Download and install</sys:String>
      <sys:String x:Key="Setup.Update.Latest">Already up to date</sys:String>
@@ -645,7 +744,7 @@ index 4bbb337..49f5a59 100644
      <sys:String x:Key="Crash.Suggestion.UsingJdk">Dans les paramètres de lancement, passez à un JRE standard ou à une autre version de Java adaptée à cette instance.</sys:String>
      <sys:String x:Key="Crash.Suggestion.UsingOpenJ9">Dans les paramètres de lancement, passez à HotSpot Java, puis réessayez.</sys:String>
 diff --git a/PCL.Core/App/Localization/Languages/zh-CN.xaml b/PCL.Core/App/Localization/Languages/zh-CN.xaml
-index 689c7d8..589402f 100644
+index 689c7d8..8643a74 100644
 --- a/PCL.Core/App/Localization/Languages/zh-CN.xaml
 +++ b/PCL.Core/App/Localization/Languages/zh-CN.xaml
 @@ -160,8 +160,12 @@
@@ -767,7 +866,25 @@ index 689c7d8..589402f 100644
      <sys:String x:Key="Crash.Suggestion.TooManyModsIdLimit">减少模组数量，或为旧版 Minecraft 安装能够扩展 ID 限制的修复模组。</sys:String>
      <sys:String x:Key="Crash.Suggestion.UsingJdk">在启动设置中改用常规 JRE 或其他适合该实例的 Java 后再试。</sys:String>
      <sys:String x:Key="Crash.Suggestion.UsingOpenJ9">在启动设置中改用 HotSpot Java 后再试。</sys:String>
-@@ -2283,6 +2313,7 @@
+@@ -1608,6 +1638,7 @@
+ 
+     <!-- Launch.Account.Microsoft -->
+ 
++    <sys:String x:Key="Launch.Account.Microsoft.ClientIdMissing">本地构建未内置微软登录所需的 OAuth Client ID，因此无法进行微软登录。&#xA;&#xA;你可以使用离线登录进入游戏；如需微软登录，请注册自己的 Azure 应用获取 Client ID，并在构建时通过 PCL_MS_CLIENT_ID 注入（详见 build.ps1 同目录的 .secrets.env.example）。</sys:String>
+     <sys:String x:Key="Launch.Account.Microsoft.Error.OperationFailed">Microsoft 登录操作失败。请查看错误详情。</sys:String>
+     <sys:String x:Key="Launch.Account.Microsoft.Error.Unknown">未知错误！</sys:String>
+     <sys:String x:Key="Launch.Account.Microsoft.LoginFailed.Message">正版登录验证失败，请考虑在 [设置 → 其他] 中关闭 [在正版登录时验证 SSL 证书]，然后再试。&#xA;&#xA;原始错误信息：</sys:String>
+@@ -2090,6 +2121,9 @@
+     <sys:String x:Key="Minecraft.Download.Modpack.QuiltUnsupported">无法安装整合包：当前启动器已不再支持 Quilt 加载器。</sys:String>
+     <sys:String x:Key="Minecraft.Download.Modpack.RarUnsupported">PCL CE 无法处理 rar 格式的压缩包，请在解压后重新压缩为 zip 格式再试</sys:String>
+     <sys:String x:Key="Minecraft.Download.Modpack.SelectEmptyFolder.Message">接下来请选择一个空文件夹，它会被安装到这个文件夹里。</sys:String>
++    <sys:String x:Key="Minecraft.Download.Modpack.OverwriteConfirm">实例 {0} 已存在，是否覆盖安装？</sys:String>
++    <sys:String x:Key="Minecraft.Download.Modpack.OverwriteConfirm.Title">覆盖安装</sys:String>
++    <sys:String x:Key="Minecraft.Download.Modpack.InstallSuccess">整合包已安装到 versions\{0}，请在实例列表中选择它启动</sys:String>
+     <sys:String x:Key="Minecraft.Download.Modpack.SelectTargetFolder.Title">选择安装目标（必须是一个空文件夹）</sys:String>
+     <sys:String x:Key="Minecraft.Download.Modpack.SomeModsDeleted">整合包中的部分模组版本已被模组作者删除，所以没法继续安装了，请向整合包作者反馈该问题</sys:String>
+     <sys:String x:Key="Minecraft.Download.Modpack.TargetFolderMustBeEmpty">请选择一个空文件夹作为安装目标！</sys:String>
+@@ -2283,6 +2317,7 @@
  
      <sys:String x:Key="Minecraft.Launch.Java.AutoDownload.Action">自动下载</sys:String>
      <sys:String x:Key="Minecraft.Launch.Java.AutoDownload.Message">PCL CE 未找到 {0}，是否需要自动下载？&#xA;如果已经安装了 {0}，可以在 设置 → 启动选项 → 游戏 Java 中手动导入。</sys:String>
@@ -775,7 +892,7 @@ index 689c7d8..589402f 100644
      <sys:String x:Key="Minecraft.Launch.Java.AutoDownload.Title">自动下载 Java？</sys:String>
      <sys:String x:Key="Minecraft.Launch.Java.Compatibility.CheckFailed">检查 Java 兼容性失败。请查看错误详情。</sys:String>
      <sys:String x:Key="Minecraft.Launch.Java.Compatibility.GlobalSelectedOutOfRange">全局指定的 Java（{0}）超出版本要求范围 [{1}, {2}]，可能导致游戏崩溃。</sys:String>
-@@ -3296,9 +3327,6 @@
+@@ -3296,9 +3331,6 @@
      <sys:String x:Key="Setup.Update.Error.NetworkFailed">无法获取最新版本信息，请检查网络连接</sys:String>
      <sys:String x:Key="Setup.Update.Install">下载并安装</sys:String>
      <sys:String x:Key="Setup.Update.Latest">已是最新版本</sys:String>
@@ -786,7 +903,7 @@ index 689c7d8..589402f 100644
      <sys:String x:Key="Setup.Update.OtherOptions.Title">其他更新选项 - 升级到 AquaCL</sys:String>
      <sys:String x:Key="Setup.Update.RestartInstall">重启安装</sys:String>
 diff --git a/PCL.Core/App/Localization/Languages/zh-TW.xaml b/PCL.Core/App/Localization/Languages/zh-TW.xaml
-index d62dcb2..a6cff71 100644
+index d62dcb2..880eb32 100644
 --- a/PCL.Core/App/Localization/Languages/zh-TW.xaml
 +++ b/PCL.Core/App/Localization/Languages/zh-TW.xaml
 @@ -127,8 +127,12 @@
@@ -908,7 +1025,25 @@ index d62dcb2..a6cff71 100644
      <sys:String x:Key="Crash.Suggestion.TooManyModsIdLimit">減少模組數量，或為舊版 Minecraft 安裝能夠擴充套件 ID 限制的修復模組。</sys:String>
      <sys:String x:Key="Crash.Suggestion.UsingJdk">在啟動設定中改用一般 JRE 或其他適合該實例的 Java 後再試。</sys:String>
      <sys:String x:Key="Crash.Suggestion.UsingOpenJ9">在啟動設定中改用 HotSpot Java 後再試。</sys:String>
-@@ -2191,6 +2221,7 @@
+@@ -1523,6 +1553,7 @@
+ 
+     <!-- Launch.Account.Microsoft -->
+ 
++    <sys:String x:Key="Launch.Account.Microsoft.ClientIdMissing">本地建構未內建微軟登入所需的 OAuth Client ID，因此無法進行微軟登入。&#xA;&#xA;你可以使用離線登入進入遊戲；如需微軟登入，請註冊自己的 Azure 應用取得 Client ID，並在建構時透過 PCL_MS_CLIENT_ID 注入（詳見 build.ps1 同目錄的 .secrets.env.example）。</sys:String>
+     <sys:String x:Key="Launch.Account.Microsoft.Error.OperationFailed">Microsoft 登入操作失敗。請檢視錯誤詳情。</sys:String>
+     <sys:String x:Key="Launch.Account.Microsoft.Error.Unknown">未知錯誤！</sys:String>
+     <sys:String x:Key="Launch.Account.Microsoft.LoginFailed.Message">微軟登入驗證失敗，請考慮在 [設定 → 其他] 中關閉 [在微軟登入時驗證 SSL 證書]，然後再試。&#xA;&#xA;原始錯誤資訊：</sys:String>
+@@ -1998,6 +2029,9 @@
+     <sys:String x:Key="Minecraft.Download.Modpack.QuiltUnsupported">無法安裝模組包：目前啟動器已不再支援 Quilt 載入器。</sys:String>
+     <sys:String x:Key="Minecraft.Download.Modpack.RarUnsupported">PCL CE 無法處理 rar 格式的壓縮檔，請在解壓縮後重新壓縮為 zip 格式再試</sys:String>
+     <sys:String x:Key="Minecraft.Download.Modpack.SelectEmptyFolder.Message">接下來請選擇一個空資料夾，它會被安裝到這個資料夾裡。</sys:String>
++    <sys:String x:Key="Minecraft.Download.Modpack.OverwriteConfirm">實例 {0} 已存在，是否覆蓋安裝？</sys:String>
++    <sys:String x:Key="Minecraft.Download.Modpack.OverwriteConfirm.Title">覆蓋安裝</sys:String>
++    <sys:String x:Key="Minecraft.Download.Modpack.InstallSuccess">整合包已安裝到 versions\{0}，請在實例列表中選擇它啟動</sys:String>
+     <sys:String x:Key="Minecraft.Download.Modpack.SelectTargetFolder.Title">選擇安裝目標（必須是一個空白資料夾）</sys:String>
+     <sys:String x:Key="Minecraft.Download.Modpack.SomeModsDeleted">模組包中的部分模組版本已被模組作者刪除，所以沒辦法繼續安裝了，請向模組包作者回饋該問題</sys:String>
+     <sys:String x:Key="Minecraft.Download.Modpack.TargetFolderMustBeEmpty">請選擇一個空白資料夾作為安裝目標！</sys:String>
+@@ -2191,6 +2225,7 @@
  
      <sys:String x:Key="Minecraft.Launch.Java.AutoDownload.Action">自動下載</sys:String>
      <sys:String x:Key="Minecraft.Launch.Java.AutoDownload.Message">PCL CE 未找到 {0}，是否需要自動下載？&#xA;如果已經安裝了 {0}，可以在 設定 → 啟動選項 → 遊戲 Java 中手動匯入。</sys:String>
@@ -916,7 +1051,7 @@ index d62dcb2..a6cff71 100644
      <sys:String x:Key="Minecraft.Launch.Java.AutoDownload.Title">自動下載 Java？</sys:String>
      <sys:String x:Key="Minecraft.Launch.Java.Compatibility.CheckFailed">檢查 Java 相容性失敗。請檢視錯誤詳情。</sys:String>
      <sys:String x:Key="Minecraft.Launch.Java.Compatibility.GlobalSelectedOutOfRange">全域指定的 Java（{0}）超出版本要求範圍 [{1}, {2}]，可能導致遊戲崩潰。</sys:String>
-@@ -3189,9 +3220,6 @@
+@@ -3189,9 +3224,6 @@
      <sys:String x:Key="Setup.Update.Error.NetworkFailed">無法取得最新版本資訊，請檢查網路連線</sys:String>
      <sys:String x:Key="Setup.Update.Install">下載並安裝</sys:String>
      <sys:String x:Key="Setup.Update.Latest">已是最新版本</sys:String>
@@ -1478,17 +1613,18 @@ index b2dae78..44b7f94 100644
          {
              targetName = loader.input;
 diff --git a/Plain Craft Launcher 2/Modules/Minecraft/ModLaunch.cs b/Plain Craft Launcher 2/Modules/Minecraft/ModLaunch.cs
-index edf56b4..1b29f54 100644
+index edf56b4..69339e6 100644
 --- a/Plain Craft Launcher 2/Modules/Minecraft/ModLaunch.cs	
 +++ b/Plain Craft Launcher 2/Modules/Minecraft/ModLaunch.cs	
-@@ -133,48 +133,6 @@ public static class ModLaunch
+@@ -132,49 +132,16 @@ public static class ModLaunch
+             }, "Donate");
          }
  #endif
-         
+-        
 -        #if DEBUG || DEBUGCI
 -        return;
 -        #endif
--
+ 
 -        // 正版购买提示
 -        if (!ProfileService.HasMicrosoftProfile)
 -        {
@@ -1523,14 +1659,22 @@ index edf56b4..1b29f54 100644
 -                        throw new Exception("$$");
 -                    }
 -                }
--
++        // [Local Patch] 按《PCL 存储库合理使用指南》重度使用条款 4，保留启动时的正版购买劝导（可跳过，不影响离线登录）
++        if (!ProfileService.HasMicrosoftProfile && ModMain.MyMsgBox(
++                Lang.Text("Minecraft.Launch.PurchaseHint.Message"),
++                Lang.Text("Minecraft.Launch.PurchaseHint.Title"),
++                Lang.Text("Minecraft.Launch.PurchaseHint.Purchase"),
++                Lang.Text("Minecraft.Launch.PurchaseHint.Later")) == 1)
++            ModBase.OpenWebsite(
++                "https://www.xbox.com/zh-cn/games/store/minecraft-java-bedrock-edition-for-pc/9nxp44l49shj");
+ 
 -            }
 -
 -        }
      }
  
      #endregion
-@@ -1135,13 +1093,14 @@ public static class ModLaunch
+@@ -1135,13 +1102,14 @@ public static class ModLaunch
                  javaCode = 8.ToString();
              }
  
@@ -1548,10 +1692,18 @@ index edf56b4..1b29f54 100644
                  {
                      task.Progress = javaLoader.Progress;
 diff --git a/Plain Craft Launcher 2/Modules/Minecraft/ModModpack.cs b/Plain Craft Launcher 2/Modules/Minecraft/ModModpack.cs
-index a465912..cf0383e 100644
+index a465912..28f2a7c 100644
 --- a/Plain Craft Launcher 2/Modules/Minecraft/ModModpack.cs	
 +++ b/Plain Craft Launcher 2/Modules/Minecraft/ModModpack.cs	
-@@ -73,13 +73,17 @@ public static class ModModpack
+@@ -4,6 +4,7 @@ using System.IO.Compression;
+ using System.Text;
+ using System.Text.RegularExpressions;
+ using PCL.Core.App;
++using PCL.Core.IO;
+ using PCL.Core.App.Localization;
+ using PCL.Core.UI;
+ using PCL.Core.Utils.Validate;
+@@ -73,13 +74,18 @@ public static class ModModpack
  
              // 获取整合包种类与关键 Json
              var packType = -1;
@@ -1562,6 +1714,7 @@ index a465912..cf0383e 100644
                  try
                  {
 -                    archive = new ZipArchive(new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read));
++                    archive?.Dispose();
 +                    archive = new ZipArchive(new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read),
 +                        ZipArchiveMode.Read, false, entryNameEncoding);
                      if (archive.Entries.Any(e => e.IsEncrypted))
@@ -1571,33 +1724,26 @@ index a465912..cf0383e 100644
                      // 从根目录判断整合包类型
                      if (archive.GetEntry("mcbbs.packmeta") is not null)
                      {
-@@ -190,6 +194,16 @@ public static class ModModpack
+@@ -190,6 +196,10 @@ public static class ModModpack
                      }
  
                      if (exitTry) break;
 +
-+                    // [Local Patch] 兜底结构探测（原 InstallPackCompress 内逻辑前移）：
-+                    // 寻找任意深度下的 "versions/实例名/实例名.json" 游戏文件夹结构
-+                    if (packType == -1)
-+                        foreach (var PackEntry in archive.Entries)
-+                            if (ModpackCompressRegex.Match("/" + PackEntry.FullName).Success)
-+                            {
-+                                packType = 8;
-+                                break;
-+                            }
++                    // [Local Patch] 兜底结构探测：versions/ 层级，或平铺打包（任意目录下同名 json+jar 对）
++                    if (packType == -1 && _FindCompressVersionEntry(archive) is not null)
++                        packType = 8;
                  }
                  catch (Exception ex)
                  {
-@@ -200,7 +214,21 @@ public static class ModModpack
+@@ -200,7 +210,20 @@ public static class ModModpack
                      else
                          throw new Exception(Lang.Text("Minecraft.Download.Modpack.UnsupportedArchive"), ex);
                  }
 -            } while (false);
 +
-+                // [Local Patch] 该编码下识别成功则无需再换编码；否则释放后换下一种编码重试
++                // [Local Patch] 该编码下识别成功则无需再换编码；archive 保留至循环结束，
++                // 供未识别时的诊断信息使用，方法结束的 finally 统一释放
 +                if (packType != -1) break;
-+                archive.Dispose();
-+                archive = null;
 +            }
 +
 +            if (packType == -1)
@@ -1611,7 +1757,7 @@ index a465912..cf0383e 100644
  
              // 执行对应的安装方法
              switch (packType)
-@@ -238,6 +266,12 @@ public static class ModModpack
+@@ -238,6 +261,12 @@ public static class ModModpack
                      return InstallPackLauncherPack(file, archive, archiveBaseFolder);
                  }
  
@@ -1624,25 +1770,188 @@ index a465912..cf0383e 100644
                  default:
                  {
                      ModBase.Log("[ModPack] 整合包种类：未能识别，假定为压缩包");
-@@ -1221,11 +1255,17 @@ public static class ModModpack
+@@ -1221,56 +1250,83 @@ public static class ModModpack
  
      #region 普通压缩包
  
+-    private static LoaderCombo<string> InstallPackCompress(string fileAddress, ZipArchive archive)
 +    /// <summary>
 +    ///     匹配任意深度下的 "versions/实例名/实例名.json" 游戏文件夹结构。
 +    /// </summary>
 +    private static readonly Regex ModpackCompressRegex =
 +        new(@"^.*\/(?=versions\/(?<ver>[^\/]+)\/(\k<ver>)\.json$)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 +
-     private static LoaderCombo<string> InstallPackCompress(string fileAddress, ZipArchive archive)
++    /// <summary>
++    ///     匹配任意深度下的平铺版本 Json（需配合同名 Jar 存在性校验）。
++    /// </summary>
++    private static readonly Regex ModpackFlatRegex =
++        new(@"^.*\/(?<ver>[^\/]+)\.json$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
++
++    /// <summary>
++    ///     在压缩包中定位游戏文件夹：优先寻找 "versions/实例名/实例名.json" 层级，
++    ///     其次兼容平铺打包（任意目录下同名 json+jar 对，含压缩包根目录）。
++    ///     返回命中条目路径（含前导 /），未命中返回 null。
++    /// </summary>
++    private static string _FindCompressVersionEntry(ZipArchive archive)
      {
-         // 尝试定位 .minecraft 文件夹：寻找形如 “/versions/XXX/XXX.json” 的路径
-         Match match = null;
+-        // 尝试定位 .minecraft 文件夹：寻找形如 “/versions/XXX/XXX.json” 的路径
+-        Match match = null;
 -        var regex = new Regex(@"^.*\/(?=versions\/(?<ver>[^\/]+)\/(\k<ver>)\.json$)", RegexOptions.IgnoreCase);
-+        var regex = ModpackCompressRegex;
-         foreach (var Entry in archive.Entries)
+-        foreach (var Entry in archive.Entries)
++        foreach (var entry in archive.Entries)
          {
-             var entryMatch = regex.Match("/" + Entry.FullName);
+-            var entryMatch = regex.Match("/" + Entry.FullName);
+-            if (entryMatch.Success)
+-            {
+-                match = entryMatch;
+-                break;
+-            }
++            var path = "/" + entry.FullName;
++            if (ModpackCompressRegex.Match(path).Success)
++                return path;
+         }
+-
+-        if (match is null)
+-            throw new Exception(Lang.Text("Minecraft.Download.Modpack.UnknownArchiveStructure")); // 没有匹配
+-        var archiveBaseFolder = match.Value.Replace("/", @"\").TrimStart('\\'); // 格式例如：包裹文件夹\.minecraft\（最短为空字符串）
+-        var instanceName = match.Groups[1].Value;
+-        ModBase.Log("[ModPack] 检测到压缩包的 .minecraft 根目录：" + archiveBaseFolder + "，命中的实例名：" + instanceName);
+-        // 获取解压路径
+-        ModMain.MyMsgBox(Lang.Text("Minecraft.Download.Modpack.SelectEmptyFolder.Message"),
+-            Lang.Text("Common.Action.Install"), Lang.Text("Common.Action.Continue"), forceWait: true);
+-        var targetFolder = SystemDialogs.SelectFolder(Lang.Text("Minecraft.Download.Modpack.SelectTargetFolder.Title"));
+-        if (string.IsNullOrEmpty(targetFolder))
+-            throw new ModBase.CancelledException();
+-        if (targetFolder.Contains("!") || targetFolder.Contains(";"))
++        foreach (var entry in archive.Entries)
+         {
+-            HintService.Hint(Lang.Text("Minecraft.Download.Modpack.InvalidGamePathChars", targetFolder),
+-                HintType.Error);
+-            throw new ModBase.CancelledException();
++            var path = "/" + entry.FullName;
++            if (!ModpackFlatRegex.IsMatch(path))
++                continue;
++            var jarPath = path[..^5] + ".jar"; // ".json" 长度为 5
++            if (archive.GetEntry(jarPath.TrimStart('/')) is not null)
++                return path;
+         }
++        return null;
++    }
+ 
+-        if (Directory.GetFileSystemEntries(targetFolder).Length > 0)
+-        {
+-            HintService.Hint(Lang.Text("Minecraft.Download.Modpack.TargetFolderMustBeEmpty"), HintType.Error);
++    private static LoaderCombo<string> InstallPackCompress(string fileAddress, ZipArchive archive)
++    {
++        // 尝试定位 .minecraft 文件夹：优先 "versions/XXX/XXX.json" 层级，其次兼容平铺打包（同名 json+jar 对）
++        var hitPath = _FindCompressVersionEntry(archive);
++        if (hitPath is null)
++            throw new Exception(Lang.Text("Minecraft.Download.Modpack.UnknownArchiveStructure")); // 没有匹配
++        var archiveBaseFolder = hitPath[..(hitPath.LastIndexOf('/') + 1)].TrimStart('/').Replace("/", @"\"); // 格式例如：包裹文件夹\（最短为空字符串）
++        var instanceName = Path.GetFileNameWithoutExtension(hitPath.TrimStart('/'));
++        ModBase.Log("[ModPack] 检测到压缩包的游戏文件夹：" + archiveBaseFolder + "，命中的实例名：" + instanceName);
++
++        // [Local Patch] 自动安装到当前游戏文件夹的 versions\ 下（版本隔离布局），不再要求手动选择空文件夹
++        instanceName = string.Join("", instanceName.Split(Path.GetInvalidFileNameChars())).Trim();
++        if (string.IsNullOrWhiteSpace(instanceName))
++            instanceName = "整合包实例";
++        var targetFolder = $@"{ModFolder.mcFolderSelected}versions\{instanceName}\";
++        ModBase.Log("[ModPack] 安装目标：" + targetFolder);
++
++        // 同名实例已存在时确认覆盖
++        if (Directory.Exists(targetFolder) && ModMain.MyMsgBox(
++                Lang.Text("Minecraft.Download.Modpack.OverwriteConfirm", instanceName),
++                Lang.Text("Minecraft.Download.Modpack.OverwriteConfirm.Title"),
++                Lang.Text("Common.Action.Confirm"), Lang.Text("Common.Action.Cancel"), isWarn: true) != 1)
+             throw new ModBase.CancelledException();
+-        }
+ 
+-        // 解压
++        // 解压（命中目录内容 → versions\实例名\，带 GB18030/UTF-8 编码重试）
+         var loader = new LoaderCombo<string>(Lang.Text("Minecraft.Download.Modpack.Stage.ExtractArchive"), new[]
+         {
+             new LoaderTask<string, int>(Lang.Text("Minecraft.Download.Modpack.Stage.ExtractArchive"), task =>
+             {
+-                ExtractModpackFiles(targetFolder, fileAddress, task, 0.95d);
+-                // 加入文件夹列表
+-                PageSelectLeft.AddFolder(Path.Combine(targetFolder, archiveBaseFolder), ModBase.GetFolderNameFromPath(targetFolder),
+-                    false);
++                if (Directory.Exists(targetFolder))
++                    ModBase.DeleteDirectory(targetFolder);
++                ExtractCompressPackToVersion(fileAddress, archiveBaseFolder, targetFolder, task, 0.95d);
+                 Thread.Sleep(400); // 避免文件争用
+-                ModBase.RunInUi(() => ModMain.frmMain.PageChange(FormMain.PageType.InstanceSelect));
++                ModInstanceList.mcInstanceListLoader.Start(isForceRestart: true);
++                ModBase.RunInUi(() =>
++                {
++                    HintService.Hint(Lang.Text("Minecraft.Download.Modpack.InstallSuccess", instanceName),
++                        HintType.Success);
++                    ModMain.frmMain.PageChange(FormMain.PageType.InstanceSelect);
++                });
+             })
+         })
+         {
+@@ -1283,6 +1339,60 @@ public static class ModModpack
+         return loader;
+     }
+ 
++    /// <summary>
++    ///     [Local Patch] 将压缩包中命中目录（archiveBaseFolder，如 "包裹文件夹/"，根目录为 ""）下的内容
++    ///     解压到目标实例文件夹（versions\实例名\），自动重试解压编码；命中目录之外的条目跳过。
++    /// </summary>
++    private static void ExtractCompressPackToVersion(string fileAddress, string archiveBaseFolder,
++        string targetFolder, LoaderBase loader, double progressIncrement)
++    {
++        var retryCount = 1;
++        var encode = Encoding.GetEncoding("GB18030");
++        var initialProgress = loader.Progress;
++
++        while (retryCount <= 5)
++            try
++            {
++                loader.Progress = initialProgress;
++                using var fs = new FileStream(fileAddress, FileMode.Open, FileAccess.Read, FileShare.Read);
++                using var archive = new ZipArchive(fs, ZipArchiveMode.Read, false, encode);
++                var entries = archive.Entries.Where(e =>
++                    e.FullName.StartsWithF(archiveBaseFolder) &&
++                    e.FullName.Length > archiveBaseFolder.Length).ToList();
++                if (entries.Count == 0)
++                    throw new Exception("压缩包中未找到游戏文件夹内容：" + archiveBaseFolder);
++                var totalCount = entries.Count;
++                foreach (var entry in entries)
++                {
++                    if (loader is not null && loader.LoadingState != MyLoading.MyLoadingState.Run)
++                        return;
++                    var destinationPath = Path.GetFullPath(Path.Combine(targetFolder,
++                        entry.FullName[archiveBaseFolder.Length..]));
++                    if (!Files.IsPathWithinDirectory(destinationPath, targetFolder))
++                        throw new Exception(
++                            $"解压文件 {entry.FullName} 错误：解压路径 {destinationPath} 不在目标目录 {targetFolder} 内");
++                    if (destinationPath.EndsWithF(@"\") || destinationPath.EndsWithF("/"))
++                        Directory.CreateDirectory(destinationPath);
++                    else
++                    {
++                        Directory.CreateDirectory(Path.GetDirectoryName(destinationPath) ?? targetFolder);
++                        entry.ExtractToFile(destinationPath, true);
++                    }
++                    loader.Progress += 1d / totalCount * progressIncrement;
++                }
++                loader.Progress = initialProgress + progressIncrement;
++                return;
++            }
++            catch (Exception ex) when (ex is ArgumentException or IOException)
++            {
++                encode = Encoding.UTF8;
++                ModBase.Log(ex, $"[ModPack] 第 {retryCount} 次解压尝试失败，已切换编码为 UTF8 重试");
++                Thread.Sleep((retryCount - 1) * 1000);
++                retryCount++;
++            }
++        throw new Exception("解压整合包文件失败");
++    }
++
+     #endregion
+ 
+     #region MultiMC
 diff --git a/Plain Craft Launcher 2/Modules/Minecraft/ProfileUi.cs b/Plain Craft Launcher 2/Modules/Minecraft/ProfileUi.cs
 index 8a4b584..98f7a0e 100644
 --- a/Plain Craft Launcher 2/Modules/Minecraft/ProfileUi.cs	
@@ -1718,10 +2027,18 @@ index b48e9d8..0ad27f4 100644
              return;
  
 diff --git a/Plain Craft Launcher 2/Modules/Updates/UpdateManager.cs b/Plain Craft Launcher 2/Modules/Updates/UpdateManager.cs
-index bb48ef7..2125076 100644
+index bb48ef7..44fcaca 100644
 --- a/Plain Craft Launcher 2/Modules/Updates/UpdateManager.cs	
 +++ b/Plain Craft Launcher 2/Modules/Updates/UpdateManager.cs	
-@@ -12,16 +12,28 @@ public static class UpdateManager
+@@ -1,6 +1,7 @@
+ ﻿using System.ComponentModel;
+ using System.Diagnostics;
+ using System.IO;
++using System.Text.RegularExpressions;
+ using PCL.Core.App;
+ using PCL.Core.App.Localization;
+ using PCL.Core.Utils;
+@@ -12,16 +13,75 @@ public static class UpdateManager
  {
      public static bool isUpdateWaitingRestart;
  
@@ -1744,22 +2061,68 @@ index bb48ef7..2125076 100644
      {
 -        new UpdatesMirrorChyanModel(),
 -        new UpdatesRandomModel(new[]
--        {
++        var sources = new List<IUpdateSource>();
++        var url = Config.Update.SourceUrl?.Trim();
++        if (!string.IsNullOrWhiteSpace(url))
+         {
 -            new UpdatesMinioModel("https://s3.pysio.online/pcl2-ce/", "Pysio"),
 -            new UpdatesMinioModel("https://staticassets.naids.com/resources/pclce/", "Naids")
 -        }),
 -        new UpdatesMinioModel("https://github.com/PCL-Community/PCL2_CE_Server/raw/main/", "GitHub")
 -    });
-+        var sources = new List<IUpdateSource>();
-+        var url = Config.Update.SourceUrl?.Trim();
-+        if (!string.IsNullOrWhiteSpace(url))
-+            sources.Add(new UpdatesMinioModel(url.TrimEnd('/') + "/", "Local"));
++            if (url.Contains("api.github.com/repos/"))
++                sources.Add(new UpdatesGitHubModel(url.TrimEnd('/') + "/"));
++            else
++                foreach (var candidate in ExpandSourceCandidates(url))
++                    sources.Add(new UpdatesMinioModel(candidate, "Local"));
++        }
 +        return new UpdatesWrapperModel(sources);
++    }
++
++    /// <summary>
++    ///     从配置的主源派生同一仓库的多个镜像基址。
++    ///     国内网络对 github.com 主站的可达性不稳定，因此 jsDelivr 形式的配置会自动附带
++    ///     raw.githubusercontent 与 github.com raw 回退，反之亦然。
++    /// </summary>
++    private static IEnumerable<string> ExpandSourceCandidates(string url)
++    {
++        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
++        url = url.TrimEnd('/') + "/";
++        yield return url;
++        seen.Add(url);
++
++        var jsdelivrMatch = Regex.Match(url,
++            @"^https?://cdn\.jsdelivr\.net/gh/([^/]+)/([^/@]+)@([^/]+)/");
++        if (jsdelivrMatch.Success)
++        {
++            var owner = jsdelivrMatch.Groups[1].Value;
++            var repo = jsdelivrMatch.Groups[2].Value;
++            var branch = jsdelivrMatch.Groups[3].Value;
++            foreach (var candidate in new[]
++                     {
++                         $"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/",
++                         $"https://github.com/{owner}/{repo}/raw/{branch}/"
++                     })
++                if (seen.Add(candidate))
++                    yield return candidate;
++            yield break;
++        }
++
++        var rawMatch = Regex.Match(url,
++            @"^https?://raw\.githubusercontent\.com/([^/]+)/([^/]+)/([^/]+)/");
++        if (!rawMatch.Success)
++            rawMatch = Regex.Match(url, @"^https?://github\.com/([^/]+)/([^/]+)/raw/([^/]+)/");
++        if (rawMatch.Success)
++        {
++            var candidate = $"https://cdn.jsdelivr.net/gh/{rawMatch.Groups[1].Value}/{rawMatch.Groups[2].Value}@{rawMatch.Groups[3].Value}/";
++            if (seen.Add(candidate))
++                yield return candidate;
++        }
 +    }
  
      public static bool IsCurrentVersionBeta
      {
-@@ -37,6 +49,9 @@ public static class UpdateManager
+@@ -37,6 +97,9 @@ public static class UpdateManager
      {
          try
          {
@@ -1769,7 +2132,7 @@ index bb48ef7..2125076 100644
              if (IsCurrentVersionBeta && (int)Config.Update.UpdateChannel != 1)
              {
                  var isNewerThanStable = remoteServer.IsLatest(UpdateChannel.stable,
-@@ -243,6 +258,12 @@ public static class UpdateManager
+@@ -243,6 +306,12 @@ public static class UpdateManager
  
      private static void ScheduleBasedOnConfig()
      {
@@ -1878,10 +2241,18 @@ index 335f4eb..0000000
 -    }
 -}
 diff --git a/Plain Craft Launcher 2/Pages/PageDownload/ModDownloadLib.cs b/Plain Craft Launcher 2/Pages/PageDownload/ModDownloadLib.cs
-index a877418..f47b3e6 100644
+index a877418..3198014 100644
 --- a/Plain Craft Launcher 2/Pages/PageDownload/ModDownloadLib.cs	
 +++ b/Plain Craft Launcher 2/Pages/PageDownload/ModDownloadLib.cs	
-@@ -722,14 +722,16 @@ public static class ModDownloadLib
+@@ -3,6 +3,7 @@ using System.Globalization;
+ using System.IO;
+ using System.IO.Compression;
+ using System.Text;
++using System.Text.RegularExpressions;
+ using System.Windows;
+ using System.Windows.Controls;
+ using System.Windows.Controls.Primitives;
+@@ -722,14 +723,16 @@ public static class ModDownloadLib
                  javaVersion, enforceVersionRange: true);
              if (java is null)
              {
@@ -1900,7 +2271,7 @@ index a877418..f47b3e6 100644
                      while (javaLoader.State == ModBase.LoadState.Loading && !task.IsAborted)
                          Thread.Sleep(10);
                  }
-@@ -1711,13 +1713,15 @@ public static class ModDownloadLib
+@@ -1711,13 +1714,15 @@ public static class ModDownloadLib
                  new Version(1, 8, 0, 60));
              if (java is null)
              {
@@ -1918,6 +2289,61 @@ index a877418..f47b3e6 100644
                      while (javaLoader.State == ModBase.LoadState.Loading && !task.IsAborted)
                          Thread.Sleep(10);
                  }
+@@ -2936,11 +2941,42 @@ public static class ModDownloadLib
+             task.Progress = 0.5d;
+             
+             var safeName = minecraftName.Replace("∞", "infinite");
+-            var bmclapiUrl = $"https://bmclapi2.bangbang93.com/fabric-meta/v2/versions/loader/{safeName}/{fabricVersion}/profile/json";
+-            var officialUrl = $"https://meta.fabricmc.net/v2/versions/loader/{safeName}/{fabricVersion}/profile/json";
++
++            // [Local Patch] bmclapi 与官方 meta 的 fabric-meta profile 接口均不再接受 "loader" 别名
++            // （实测全版本 404/400），因此先解析出具体的 Fabric loader 版本号，再构造 profile 地址；
++            // 若传入版本无效，自动选用该 MC 版本最新的 Fabric loader 版本
++            var candidateUrls = new List<string>();
++            try
++            {
++                var loaderVersion = fabricVersion;
++                var needResolve = string.IsNullOrWhiteSpace(loaderVersion) ||
++                                  !Regex.IsMatch(loaderVersion, @"^\d+(\.\d+)+$");
++                if (needResolve)
++                {
++                    var loaderList = (JsonArray)ModBase.GetJson(Requester.FetchString(
++                        $"https://meta.fabricmc.net/v2/versions/loader/{safeName}",
++                        new RequestParam { UseBrowserUserAgent = true, Timeout = 20000, Retries = 2 }));
++                    // 兼容两种条目形状：per-game 列表为 {"loader":{"version":"..."},...}，聚合列表为 {"version":"..."}
++                    loaderVersion = loaderList?.FirstOrDefault(i => i?["loader"]?["version"] is not null)
++                        ?["loader"]?["version"]?.ToString()
++                        ?? loaderList?.FirstOrDefault(i => i?["version"] is not null)?["version"]?.ToString();
++                    if (string.IsNullOrWhiteSpace(loaderVersion))
++                        throw new Exception("Fabric meta 未提供可用的 loader 版本");
++                    ModBase.Log($"[Download] Fabric loader 版本无效（{fabricVersion}），已自动选用最新版本：{loaderVersion}");
++                }
++                ModBase.Log($"[Download] Fabric loader 版本：{loaderVersion}");
++                candidateUrls.Add($"https://bmclapi2.bangbang93.com/fabric-meta/v2/versions/loader/{safeName}/{loaderVersion}/profile/json");
++                candidateUrls.Add($"https://meta.fabricmc.net/v2/versions/loader/{safeName}/{loaderVersion}/profile/json");
++            }
++            catch (Exception ex)
++            {
++                ModBase.Log(ex, "[Download] 获取 Fabric loader 版本列表失败，回退为原始地址尝试");
++                if (!string.IsNullOrWhiteSpace(fabricVersion) && fabricVersion != "loader")
++                    candidateUrls.Add($"https://meta.fabricmc.net/v2/versions/loader/{safeName}/{fabricVersion}/profile/json");
++            }
+ 
+             string json = null;
+-            foreach (var url in new[] { bmclapiUrl, officialUrl })
++            foreach (var url in candidateUrls)
+             {
+                 try
+                 {
+@@ -2955,7 +2991,7 @@ public static class ModDownloadLib
+ 
+             if (json is null)
+                 throw new Exception(Lang.Text("Minecraft.Download.Error.FabricMetaDownloadFailed",
+-                    $"{bmclapiUrl} and {officialUrl}"));
++                    string.Join(" and ", candidateUrls)));
+ 
+             Directory.CreateDirectory(versionFolder);
+             File.WriteAllText(Path.Combine(versionFolder, id + ".json"), json, Encoding.UTF8);
 diff --git a/Plain Craft Launcher 2/Pages/PageLaunch/PageLaunchLeft.xaml.cs b/Plain Craft Launcher 2/Pages/PageLaunch/PageLaunchLeft.xaml.cs
 index 3ca3c55..2ef8795 100644
 --- a/Plain Craft Launcher 2/Pages/PageLaunch/PageLaunchLeft.xaml.cs	
@@ -1952,6 +2378,25 @@ index 3ca3c55..2ef8795 100644
              }
  
              ModBase.Log("[Launch] Minecraft 文件夹：" + ModFolder.mcFolderSelected);
+diff --git a/Plain Craft Launcher 2/Pages/PageLaunch/PageLoginMs.xaml.cs b/Plain Craft Launcher 2/Pages/PageLaunch/PageLoginMs.xaml.cs
+index 0b043f6..755c6eb 100644
+--- a/Plain Craft Launcher 2/Pages/PageLaunch/PageLoginMs.xaml.cs	
++++ b/Plain Craft Launcher 2/Pages/PageLaunch/PageLoginMs.xaml.cs	
+@@ -23,6 +23,14 @@ public partial class PageLoginMs
+ 
+     private void BtnLogin_Click(object sender, EventArgs e)
+     {
++        // [Local Patch] 本地构建未内置微软 OAuth Client ID 时给出明确指引，而非裸异常
++        if (string.IsNullOrWhiteSpace(PCL.Core.App.Secrets.MSOAuthClientId))
++        {
++            ModMain.MyMsgBox(
++                Lang.Text("Launch.Account.Microsoft.ClientIdMissing"),
++                Lang.Text("Launch.Account.Microsoft.Login"), isWarn: true);
++            return;
++        }
+         BtnLogin.IsEnabled = false;
+         BtnBack.Visibility = Visibility.Collapsed;
+         BtnLogin.Text = Lang.Number(0d, "P0");
 diff --git a/Plain Craft Launcher 2/Pages/PageSetup/PageSetupLeft.xaml b/Plain Craft Launcher 2/Pages/PageSetup/PageSetupLeft.xaml
 index 9acdae8..947869a 100644
 --- a/Plain Craft Launcher 2/Pages/PageSetup/PageSetupLeft.xaml	
@@ -2378,15 +2823,18 @@ index 92f84ca..ea6358f 100644
      <ItemGroup>
          <ProjectReference Include="..\PCL.Core\PCL.Core.csproj" />
 diff --git a/Plain Craft Launcher 2/metadata.json b/Plain Craft Launcher 2/metadata.json
-index ecbed27..317b18d 100644
+index ecbed27..3b1a5e5 100644
 --- a/Plain Craft Launcher 2/metadata.json	
 +++ b/Plain Craft Launcher 2/metadata.json	
-@@ -3,7 +3,7 @@
+@@ -1,9 +1,9 @@
+ {
+-  "name": "Plain Craft Launcher Community Edition",
++  "name": "PCL2CE 个人修改版",
    "version": {
      "base": "2.15.1",
      "upstream": "2.12.1",
 -    "suffix": "",
-+    "suffix": "local",
++    "suffix": "local.2",
      "code": 524
    },
    "licenses": [

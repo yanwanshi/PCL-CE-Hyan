@@ -1,7 +1,68 @@
 # 本地构建更新日志（LOCAL-CHANGELOG）
 
 > 本文件记录相对上游 `PCL-Community/PCL-CE`（dev 分支，2026-10-30 克隆）的全部本地改动。
-> 所有改动在源码中以 `// [Local Patch]` 注释标记。**请勿以 PCL-CE 名义分发本构建。**
+> 所有改动在源码中以 `// [Local Patch]` 注释标记。**请勿以 PCL-CE 官方名义分发本构建。**
+
+## local.9 — 2026-11-14
+
+### 微软登录引导与构建密钥注入
+
+- 问题：本地构建不含 `MS_CLIENT_ID` 密钥（正式版由 CI 注入），点「微软登录」会抛裸异常「Microsoft OAuth client id is not configured」。
+- 修复：登录页检测到未配置 Client ID 时给出明确指引（改用离线登录 / 自行注册 Azure 应用并在构建时注入），不再抛裸异常。
+- 构建支持密钥注入：`build.ps1` 现在会加载同目录的 `.secrets.env`（`PCL_*` 键值对），配合 `PCL_WRITE_SECRET=1` 由源码生成器把密钥编译进 exe；新增 `.secrets.env.example` 模板（含 Azure 应用注册步骤说明）。
+- 新增文案键 `Launch.Account.Microsoft.ClientIdMissing`（zh-CN/zh-TW/en-US/en-GB）。
+
+## local.8 — 2026-11-14
+
+### 修复：Fabric loader 安装失败（Fabric meta 下载失败）
+
+- 实测定位（对 26.3 与 1.21.1 双版本验证）：`bmclapi2.bangbang93.com/fabric-meta/v2/versions/loader/{mc}/{loader}/profile/json` 对所有版本 404（镜像路径已失效）；`meta.fabricmc.net` 同形 URL 带 "loader" 别名一律 400（官方 meta 已不接受该形式）。带具体 loader 版本号的三段式 URL 则两源均 200。
+- 修复（`McDownloadFabricLoader`）：安装时先解析实际 loader 版本——传入版本无效（如字面量 "loader"）或为空时，自动从 `meta.fabricmc.net/v2/versions/loader/{mc}` 取最新版本（如 26.3 → 0.20.1），再以具体版本构造 profile 地址（bmclapi 镜像 + 官方双源保留）；解析失败且无有效传入版本时给出明确错误。
+- 所有 Fabric 安装入口（版本安装页、实例设置页、启动补装、整合包内嵌 Fabric）统一受益。
+- 修正解析器形状：per-game loader 列表条目为 `{"loader":{"version":"..."},...}`（版本嵌套在 loader 键下），与聚合列表的扁平形状并存兼容。已用真实端点端到端验证：26.3 → 最新 loader 0.20.1，官方源与 BMCLAPI 镜像 profile 均获取成功。
+- 触发场景补充：用户重打包的 CurseForge 格式包 manifest 中 Fabric 声明为裸 `fabric-loader`（无版本号），`id.Replace("fabric-","")` 推导出 "loader"——解析器自动改用该 MC 版本最新 loader 安装。
+
+## local.7 — 2026-11-14
+
+### 整合包安装流程重做：拖入即自动安装
+
+- 旧流程：识别后弹「选择一个空文件夹」→ 用户选择 → 整包解压到所选文件夹 → AddFolder。两个问题：弹窗反复出现被感知为「循环」；且平铺包解压后是散装布局，PCL 实例扫描（只认 versions/ 下实例）找不到实例，表现为「未找到可用 Minecraft 实例」。
+- 新流程：识别命中后**自动安装到当前游戏文件夹的 `versions\实例名\`**（版本隔离布局）：
+  - 实例名取版本 json 文件名（过滤非法字符）；
+  - 解压按命中目录前缀剥离包裹层，嵌套包与根平铺包统一处理；命中目录之外的条目跳过；
+  - `versions\实例名\` 已存在时确认覆盖；
+  - 解压带 GB18030→UTF-8 编码重试与 zip-slip 目录包含校验；
+  - 完成后强制刷新实例列表、跳转实例选择页并弹成功提示（含安装路径）。
+- 新增文案键 `Minecraft.Download.Modpack.OverwriteConfirm(.Title)` / `InstallSuccess`（zh-CN/zh-TW/en-US/en-GB）。
+- 平铺包安装结果即版本隔离实例：`versions\Catgirl Server 26.3\` 内含 json/jar/mods/config/PCL 等，与源实例布局一致。
+
+## local.6 — 2026-11-14
+
+### 修复：平铺式游戏文件夹包无法识别 + 诊断路径 NRE
+
+- 真实案例：直接打包 PCL 隔离实例文件夹得到的平铺 zip（版本 `json+jar` 在根目录，无 `versions/` 层级），原兜底正则只认 `versions/实例名/实例名.json`，两种编码下均识别失败；且识别失败路径上存在 NRE（archive 被置空后仍被顶层条目诊断逻辑引用）。
+- 修复：兜底识别泛化为「任意目录下同名 json+jar 对」（兼容 versions 层级与平铺，含根目录平铺）；探测循环不再置空 archive，NRE 消除且诊断信息可靠。
+- 已用真实包与构造的 versions 层级包双样本验证命中：平铺包基目录为空、实例名取 json 文件名；versions 层级包行为与原版一致。
+
+## local.5 — 2026-11-14
+
+### 自有更新通道上线（GitHub Releases 直连源）
+
+- 网络实测（本机）：`api.github.com` 与 Release 资产对象存储域可达；`cdn.jsdelivr.net`/`raw.githubusercontent.com`/`github.com` 主站均不可达或严重劣化。据此新增 **`UpdatesGitHubModel`** 更新源：
+  - 版本检查 `GET {apiBase}releases/latest`（api.github.com），元数据与更新包走 Release 资产（update-meta.json + zip，对象存储域）；
+  - Release 需附带 `update-meta.json`：`{"versionCode":int,"exeSha256":"...","changelog":"<summary>...</summary>"}`；
+  - 公告返回空列表（该源不提供公告）。
+- `SystemUpdateSourceUrl` 默认值烘焙为 `https://api.github.com/repos/yanwanshi/PCL-CE-Hyan/`——所有副本开箱即用内部更新；URL 含 `api.github.com/repos/` 时走 GitHub 模型，其余仍走 Minio 多镜像。
+- 首版已发布：https://github.com/yanwanshi/PCL-CE-Hyan/releases/tag/v2.15.1-local（zip + update-meta.json），冒烟验证「远程最新版本: 2.15.1-local」判定通过。
+- 新增 `publish-update.ps1`：打包 exe → 计算 sha256 → 同步补丁/日志到仓库 → 创建 Release → 上传资产。（注意：本版脚本的 apiv2 JSON 流程已废弃待改，见待办。）
+
+### 许可合规（公开分发要求落实）
+
+- 依据《PCL 存储库合理使用指南》重度使用条款：
+  - 产品显示名改为 **「PCL2CE 个人修改版」**（保留 PCL2CE 字样 + 修改后缀，条款 1/2）；
+  - 恢复启动时**非阻断**正版购买劝导（条款 4；不恢复阻断式验证弹窗，离线登录不受影响）；
+  - 更新仓库附带补丁集与本日志 = 公开源代码（条款 3）；关于页署名继承 CE（条款 3）。
+- 更新仓库：https://github.com/yanwanshi/PCL-CE-Hyan（公开，README 含署名与许可说明）。
 
 ## local.4 — 2026-11-14
 

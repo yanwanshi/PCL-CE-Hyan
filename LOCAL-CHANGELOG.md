@@ -3,6 +3,22 @@
 > 本文件记录相对上游 `PCL-Community/PCL-CE`（dev 分支，2026-10-30 克隆）的全部本地改动。
 > 所有改动在源码中以 `// [Local Patch]` 注释标记。**请勿以 PCL-CE 官方名义分发本构建。**
 
+## local.3 — 2026-11-16
+
+### 修复：以微软档案点「启动」时抛裸异常
+
+- local.9 已给「微软登录」页加了未配置 Client ID 的友好拦截，但**启动路径**（选中微软档案后点「启动」）绕过该拦截，仍抛「Microsoft OAuth client id is not configured」裸异常。
+- 修复：`ModLaunch.McLoginStart` 在派发微软登录加载器前检查 `Secrets.MSOAuthClientId`，未配置时以 `$` 前缀约定抛出本地化指引（`Launch.Account.Microsoft.ClientIdMissing`），启动流程会以友好弹窗展示而非错误详情页。
+- 同时修复构建管线两处缺陷：① 补丁导出漏掉未跟踪新文件（`git add -N .` 全量 intent-to-add，防止 `git clean` 误删无备份）与已暂存删除项（导出改用 `git diff HEAD`）；② 汇总步骤读取 metadata.json 补 `-Encoding UTF8`（PS 5.1 默认 GBK 解码中文导致 JSON 解析失败）。
+
+## local.10 — 2026-11-16
+
+### 更新通道首版发布 + 内置更新模块实测
+
+- 构建版本升为 **2.15.1-local.2**（versionCode 525），已发布：https://github.com/yanwanshi/PCL-CE-Hyan/releases/tag/v2.15.1-local.2（zip + update-meta.json 双资产，sha256 校验一致）。
+- 更新仓库 main 分支已同步最新补丁集（39 文件，含 local.1–local.9 全部改动）与 LOCAL-CHANGELOG；已废弃的 apiv2 旧格式文件移除。
+- **内置更新模块实测通过**（2.15.1-local 实例实测）：启动 → 自动检测到 2.15.1-local.2 → 从 `releases/download` 下载 76.1MB 更新包（分段重试正常）→ 提取 exe → SHA-256 校验通过 → 等待重启安装。全程约 14 秒。
+
 ## local.9 — 2026-11-14
 
 ### 微软登录引导与构建密钥注入

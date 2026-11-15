@@ -115,14 +115,30 @@ index 787b37d..5476c2e 100644
 +artifact/
 diff --git a/LOCAL-CHANGELOG.md b/LOCAL-CHANGELOG.md
 new file mode 100644
-index 0000000..999eb6a
+index 0000000..d5799a3
 --- /dev/null
 +++ b/LOCAL-CHANGELOG.md
-@@ -0,0 +1,163 @@
+@@ -0,0 +1,179 @@
 +# 本地构建更新日志（LOCAL-CHANGELOG）
 +
 +> 本文件记录相对上游 `PCL-Community/PCL-CE`（dev 分支，2026-10-30 克隆）的全部本地改动。
 +> 所有改动在源码中以 `// [Local Patch]` 注释标记。**请勿以 PCL-CE 官方名义分发本构建。**
++
++## local.3 — 2026-11-16
++
++### 修复：以微软档案点「启动」时抛裸异常
++
++- local.9 已给「微软登录」页加了未配置 Client ID 的友好拦截，但**启动路径**（选中微软档案后点「启动」）绕过该拦截，仍抛「Microsoft OAuth client id is not configured」裸异常。
++- 修复：`ModLaunch.McLoginStart` 在派发微软登录加载器前检查 `Secrets.MSOAuthClientId`，未配置时以 `$` 前缀约定抛出本地化指引（`Launch.Account.Microsoft.ClientIdMissing`），启动流程会以友好弹窗展示而非错误详情页。
++- 同时修复构建管线两处缺陷：① 补丁导出漏掉未跟踪新文件（`git add -N .` 全量 intent-to-add，防止 `git clean` 误删无备份）与已暂存删除项（导出改用 `git diff HEAD`）；② 汇总步骤读取 metadata.json 补 `-Encoding UTF8`（PS 5.1 默认 GBK 解码中文导致 JSON 解析失败）。
++
++## local.10 — 2026-11-16
++
++### 更新通道首版发布 + 内置更新模块实测
++
++- 构建版本升为 **2.15.1-local.2**（versionCode 525），已发布：https://github.com/yanwanshi/PCL-CE-Hyan/releases/tag/v2.15.1-local.2（zip + update-meta.json 双资产，sha256 校验一致）。
++- 更新仓库 main 分支已同步最新补丁集（39 文件，含 local.1–local.9 全部改动）与 LOCAL-CHANGELOG；已废弃的 apiv2 旧格式文件移除。
++- **内置更新模块实测通过**（2.15.1-local 实例实测）：启动 → 自动检测到 2.15.1-local.2 → 从 `releases/download` 下载 76.1MB 更新包（分段重试正常）→ 提取 exe → SHA-256 校验通过 → 等待重启安装。全程约 14 秒。
 +
 +## local.9 — 2026-11-14
 +
@@ -1613,7 +1629,7 @@ index b2dae78..44b7f94 100644
          {
              targetName = loader.input;
 diff --git a/Plain Craft Launcher 2/Modules/Minecraft/ModLaunch.cs b/Plain Craft Launcher 2/Modules/Minecraft/ModLaunch.cs
-index edf56b4..69339e6 100644
+index edf56b4..df11439 100644
 --- a/Plain Craft Launcher 2/Modules/Minecraft/ModLaunch.cs	
 +++ b/Plain Craft Launcher 2/Modules/Minecraft/ModLaunch.cs	
 @@ -132,49 +132,16 @@ public static class ModLaunch
@@ -1674,7 +1690,17 @@ index edf56b4..69339e6 100644
      }
  
      #endregion
-@@ -1135,13 +1102,14 @@ public static class ModLaunch
+@@ -640,6 +607,9 @@ public static class ModLaunch
+         {
+             case McLoginType.Ms:
+             {
++                // [Local Patch] 本地构建未内置微软 OAuth Client ID 时，启动前给出明确指引而非裸异常
++                if (string.IsNullOrWhiteSpace(PCL.Core.App.Secrets.MSOAuthClientId))
++                    throw new Exception("$" + Lang.Text("Launch.Account.Microsoft.ClientIdMissing"));
+                 loader = mcLoginMsLoader;
+                 break;
+             }
+@@ -1135,13 +1105,14 @@ public static class ModLaunch
                  javaCode = 8.ToString();
              }
  
@@ -2145,6 +2171,141 @@ index bb48ef7..44fcaca 100644
          switch (Config.Update.UpdateMode)
          {
              case LauncherAutoUpdateBehavior.DownloadAndInstall:
+diff --git a/Plain Craft Launcher 2/Modules/Updates/UpdatesGitHubModel.cs b/Plain Craft Launcher 2/Modules/Updates/UpdatesGitHubModel.cs
+new file mode 100644
+index 0000000..d9e3539
+--- /dev/null
++++ b/Plain Craft Launcher 2/Modules/Updates/UpdatesGitHubModel.cs	
+@@ -0,0 +1,129 @@
++using System.IO;
++using System.IO.Compression;
++using PCL.Core.App;
++using PCL.Core.App.Localization;
++using PCL.Core.Utils;
++using PCL.Network;
++using PCL.Network.Loaders;
++
++namespace PCL;
++/// <summary>
++///     GitHub Releases 更新源。
++///     版本检查走 api.github.com，更新包与元数据走 Release 资产（对象存储域），
++///     全程不经过 github.com 主站与被干扰的 CDN，是国内可达性最好的一条路径。
++///     Release 需包含 update-meta.json 资产：{"versionCode":int,"exeSha256":"...","changelog":"..."}。
++/// </summary>
++public class UpdatesGitHubModel : IUpdateSource
++{
++    private readonly string _apiBase; // 形如 https://api.github.com/repos/<owner>/<repo>/
++    private JsonObject _releaseCache;
++    private VersionDataModel _latestCache;
++
++    public UpdatesGitHubModel(string apiBase)
++    {
++        _apiBase = apiBase;
++        SourceName = "GitHub";
++    }
++
++    public string SourceName { get; set; }
++
++    public bool IsAvailable()
++    {
++        return !string.IsNullOrWhiteSpace(_apiBase);
++    }
++
++    public bool RefreshCache()
++    {
++        var content = ModNet.NetGetCodeByLoader(
++            new[] { $"{_apiBase}releases/latest" }, 45000, false, true);
++        _releaseCache = (JsonObject)ModBase.GetJson(content);
++        if (string.IsNullOrWhiteSpace(_releaseCache["tag_name"]?.ToString()))
++            throw new Exception("GitHub Releases 响应缺少 tag_name");
++        return true;
++    }
++
++    public VersionDataModel GetLatestVersion(UpdateChannel channel, UpdateArch arch)
++    {
++        return _GetLatestVersion();
++    }
++
++    public bool IsLatest(UpdateChannel channel, UpdateArch arch, SemVer currentVersion, int currentVersionCode)
++    {
++        var latestVersion = _GetLatestVersion();
++        return currentVersion >= SemVer.Parse(latestVersion.VersionName);
++    }
++
++    public VersionAnnouncementDataModel GetAnnouncementList()
++    {
++        // GitHub Releases 源不提供公告，返回空列表即可
++        return new VersionAnnouncementDataModel { Content = new() };
++    }
++
++    public List<ModLoader.LoaderBase> GetDownloadLoader(UpdateChannel channel, UpdateArch arch, string output)
++    {
++        if (_releaseCache is null)
++            RefreshCache();
++        var loaders = new List<ModLoader.LoaderBase>();
++        var tempPath = $@"{ModBase.pathTemp}Cache\Update\Download\{_releaseCache["tag_name"]}.zip";
++        loaders.Add(new ModLoader.LoaderTask<int, List<DownloadFile>>(Lang.Text("Update.Task.GetVersionInfo"), load =>
++        {
++            var zipUrl = _FindAssetUrl(".zip");
++            if (zipUrl is null)
++                throw new Exception("GitHub Release 中没有更新包");
++            load.output = new List<DownloadFile> { new(new[] { zipUrl }, tempPath) };
++        }));
++        loaders.Add(new LoaderDownload(Lang.Text("Update.Task.DownloadFile"), new List<DownloadFile>()));
++        loaders.Add(new ModLoader.LoaderTask<string, int>(Lang.Text("Update.Task.ApplyFile"), _ =>
++        {
++            using var fs = new FileStream(tempPath, FileMode.Open, FileAccess.Read, FileShare.Read);
++            using var zip = new ZipArchive(fs);
++            var entry = zip.Entries.FirstOrDefault(x => x.Name.Contains("Plain Craft Launcher Community Edition.exe"))
++                ?? zip.Entries.FirstOrDefault(x => x.Name.Contains("Plain Craft Launcher"))
++                ?? zip.Entries.FirstOrDefault(x => x.Name.Contains(".exe"));
++            if (entry is null)
++                throw new Exception(Lang.Text("Update.Error.FileNotFound"));
++            // 解压到指定文件（覆盖已存在文件）
++            entry.ExtractToFile(output, true);
++        }));
++        return loaders;
++    }
++
++    private VersionDataModel _GetLatestVersion()
++    {
++        if (_latestCache is not null)
++            return _latestCache;
++        if (_releaseCache is null)
++            RefreshCache();
++
++        var versionName = _releaseCache["tag_name"]?.ToString().TrimStart('v');
++        if (string.IsNullOrWhiteSpace(versionName))
++            throw new Exception("GitHub Releases 响应缺少版本号");
++
++        var metaUrl = _FindAssetUrl("update-meta.json");
++        if (metaUrl is null)
++            throw new Exception("GitHub Release 中缺少 update-meta.json");
++        var meta = (JsonObject)ModBase.GetJson(ModNet.NetGetCodeByLoader(
++            new[] { metaUrl }, 45000, false, true));
++
++        _latestCache = new VersionDataModel
++        {
++            VersionName = versionName,
++            VersionCode = (int)meta["versionCode"],
++            Sha256 = meta["exeSha256"]?.ToString(),
++            Source = SourceName,
++            Changelog = meta["changelog"]?.ToString()
++                ?? _releaseCache["body"]?.ToString()
++                ?? ""
++        };
++        return _latestCache;
++    }
++
++    private string _FindAssetUrl(string nameEndsWith)
++    {
++        if (_releaseCache is null)
++            RefreshCache();
++        var asset = _releaseCache["assets"]?.AsArray().FirstOrDefault(a =>
++            a?["name"]?.ToString().EndsWith(nameEndsWith, StringComparison.OrdinalIgnoreCase) == true);
++        return asset?["browser_download_url"]?.ToString();
++    }
++}
 diff --git a/Plain Craft Launcher 2/Modules/Updates/UpdatesMirrorChyanModel.cs b/Plain Craft Launcher 2/Modules/Updates/UpdatesMirrorChyanModel.cs
 deleted file mode 100644
 index 335f4eb..0000000
@@ -2823,18 +2984,19 @@ index 92f84ca..ea6358f 100644
      <ItemGroup>
          <ProjectReference Include="..\PCL.Core\PCL.Core.csproj" />
 diff --git a/Plain Craft Launcher 2/metadata.json b/Plain Craft Launcher 2/metadata.json
-index ecbed27..3b1a5e5 100644
+index ecbed27..ebd8293 100644
 --- a/Plain Craft Launcher 2/metadata.json	
 +++ b/Plain Craft Launcher 2/metadata.json	
-@@ -1,9 +1,9 @@
+@@ -1,10 +1,10 @@
  {
 -  "name": "Plain Craft Launcher Community Edition",
 +  "name": "PCL2CE 个人修改版",
    "version": {
      "base": "2.15.1",
      "upstream": "2.12.1",
--    "suffix": "",
-+    "suffix": "local.2",
-     "code": 524
+     "suffix": "",
+-    "code": 524
++    "code": 525
    },
    "licenses": [
+     {

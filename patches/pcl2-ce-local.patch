@@ -2984,7 +2984,7 @@ index 92f84ca..ea6358f 100644
      <ItemGroup>
          <ProjectReference Include="..\PCL.Core\PCL.Core.csproj" />
 diff --git a/Plain Craft Launcher 2/metadata.json b/Plain Craft Launcher 2/metadata.json
-index ecbed27..ebd8293 100644
+index ecbed27..c721ee7 100644
 --- a/Plain Craft Launcher 2/metadata.json	
 +++ b/Plain Craft Launcher 2/metadata.json	
 @@ -1,10 +1,10 @@
@@ -2994,9 +2994,10 @@ index ecbed27..ebd8293 100644
    "version": {
      "base": "2.15.1",
      "upstream": "2.12.1",
-     "suffix": "",
+-    "suffix": "",
 -    "code": 524
-+    "code": 525
++    "suffix": "local.3",
++    "code": 526
    },
    "licenses": [
      {

@@ -3,9 +3,9 @@
 > 本文件记录相对上游 `PCL-Community/PCL-CE`（dev 分支，2026-10-30 克隆）的全部本地改动。
 > 所有改动在源码中以 `// [Local Patch]` 注释标记。**请勿以 PCL-CE 官方名义分发本构建。**
 
-## local.3 — 2026-11-16
+## local.11 — 2026-11-16
 
-### 修复：以微软档案点「启动」时抛裸异常
+### 修复：以微软档案点「启动」时抛裸异常（发布版本号 2.15.1-local.3）
 
 - local.9 已给「微软登录」页加了未配置 Client ID 的友好拦截，但**启动路径**（选中微软档案后点「启动」）绕过该拦截，仍抛「Microsoft OAuth client id is not configured」裸异常。
 - 修复：`ModLaunch.McLoginStart` 在派发微软登录加载器前检查 `Secrets.MSOAuthClientId`，未配置时以 `$` 前缀约定抛出本地化指引（`Launch.Account.Microsoft.ClientIdMissing`），启动流程会以友好弹窗展示而非错误详情页。
